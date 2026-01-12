@@ -18,18 +18,29 @@
 
 The local git repository is ready but needs to be pushed to GitHub:
 
-1. **Create repo on GitHub:**
-   - Go to https://github.com/new
-   - Name: `mcp-server-chatgpt-scraper`
-   - Description: "MCP server for scraping ChatGPT conversations from shared links"
-   - Public repository
-   - Do NOT initialize with README (we already have one)
+**Using GitHub CLI (Recommended - Always use CLI for repo creation):**
 
-2. **Push to GitHub:**
-   ```bash
-   cd /Users/markmhendrickson/repos/personal/mcp/chatgpt-scraper
-   git push -u origin main
-   ```
+Run the automated script:
+```bash
+cd /Users/markmhendrickson/repos/personal/mcp/chatgpt-scraper
+./create_repo.sh
+```
+
+Or manually:
+```bash
+# Authenticate (if not already)
+gh auth login
+
+# Create and push repo
+cd /Users/markmhendrickson/repos/personal/mcp/chatgpt-scraper
+gh repo create mcp-server-chatgpt-scraper --public --source=. --remote=origin --push
+```
+
+**Note:** Always use GitHub CLI (`gh`) to create repositories. The script will:
+- Install GitHub CLI if missing
+- Authenticate if needed
+- Create the repository
+- Push all commits
 
 ### 2. Add as Submodule to Parent Repo
 
