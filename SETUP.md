@@ -22,7 +22,7 @@ The local git repository is ready but needs to be pushed to GitHub:
 
 Run the automated script:
 ```bash
-cd /Users/markmhendrickson/repos/personal/mcp/chatgpt-scraper
+cd /Users/markmhendrickson/repos/personal/mcp/web-scraper
 ./create_repo.sh
 ```
 
@@ -32,8 +32,8 @@ Or manually:
 gh auth login
 
 # Create and push repo
-cd /Users/markmhendrickson/repos/personal/mcp/chatgpt-scraper
-gh repo create mcp-server-chatgpt-scraper --public --source=. --remote=origin --push
+cd /Users/markmhendrickson/repos/personal/mcp/web-scraper
+gh repo create mcp-server-web-scraper --public --source=. --remote=origin --push
 ```
 
 **Note:** Always use GitHub CLI (`gh`) to create repositories. The script will:
@@ -50,14 +50,14 @@ Once the GitHub repo is created and pushed:
 cd /Users/markmhendrickson/repos/personal
 
 # Remove the local directory (we'll re-add it as submodule)
-rm -rf mcp/chatgpt-scraper
+rm -rf mcp/web-scraper
 
 # Add as submodule
-git submodule add https://github.com/markmhendrickson/mcp-server-chatgpt-scraper.git mcp/chatgpt-scraper
+git submodule add https://github.com/markmhendrickson/mcp-server-web-scraper.git mcp/web-scraper
 
 # Commit the submodule addition
-git add .gitmodules mcp/chatgpt-scraper
-git commit -m "Add chatgpt-scraper MCP server as submodule"
+git add .gitmodules mcp/web-scraper
+git commit -m "Add web-scraper MCP server as submodule"
 ```
 
 ### 3. Test the MCP Server
@@ -71,7 +71,7 @@ After setting up as submodule:
 
 2. **Test directly:**
    ```bash
-   cd mcp/chatgpt-scraper
+   cd mcp/web-scraper
    ./run-chatgpt-scraper-mcp.sh
    # Server should start without errors
    ```
@@ -120,9 +120,9 @@ If you have 1Password CLI:
 - `SETUP.md` - This file
 
 **Git Status:**
-- 2 commits made locally
-- Remote configured: https://github.com/markmhendrickson/mcp-server-chatgpt-scraper.git
-- Ready to push once GitHub repo is created
+- Commits made locally
+- Remote configured: https://github.com/markmhendrickson/mcp-server-web-scraper.git
+- Repository renamed from mcp-server-chatgpt-scraper to mcp-server-web-scraper
 
 **Parent Repo Changes:**
 - `mcp/mcp-config-template.json` - Added chatgpt-scraper entry

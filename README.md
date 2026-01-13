@@ -2,6 +2,8 @@
 
 MCP server for scraping ChatGPT conversations from shared links. Supports multiple scraping methods and provides tools for managing scraped conversations.
 
+> **Note:** This repository was renamed from `mcp-server-chatgpt-scraper` to `mcp-server-web-scraper` on GitHub, but the functionality remains focused on ChatGPT conversation scraping.
+
 ## Features
 
 - **Multiple Scraping Methods**: Playwright (default), Apify API, or requests/BeautifulSoup
@@ -19,13 +21,13 @@ MCP server for scraping ChatGPT conversations from shared links. Supports multip
 1. **Add as submodule** (once GitHub repo is created):
    ```bash
    cd /path/to/parent/repo
-   git submodule add https://github.com/markmhendrickson/mcp-server-chatgpt-scraper.git mcp/chatgpt-scraper
-   git submodule update --init mcp/chatgpt-scraper
+   git submodule add https://github.com/markmhendrickson/mcp-server-web-scraper.git mcp/web-scraper
+   git submodule update --init mcp/web-scraper
    ```
 
 2. **Install dependencies**:
    ```bash
-   cd mcp/chatgpt-scraper
+   cd mcp/web-scraper
    pip install -r requirements.txt
    ```
 
@@ -38,8 +40,8 @@ MCP server for scraping ChatGPT conversations from shared links. Supports multip
 
 1. **Clone repository**:
    ```bash
-   git clone https://github.com/markmhendrickson/mcp-server-chatgpt-scraper.git
-   cd mcp-server-chatgpt-scraper
+   git clone https://github.com/markmhendrickson/mcp-server-web-scraper.git
+   cd mcp-server-web-scraper
    ```
 
 2. **Install dependencies**:
@@ -194,8 +196,8 @@ Get details about a specific scraped conversation.
    ```json
    {
      "mcpServers": {
-       "chatgpt-scraper": {
-         "command": "/absolute/path/to/mcp/chatgpt-scraper/run-chatgpt-scraper-mcp.sh"
+       "web-scraper": {
+         "command": "/absolute/path/to/mcp/web-scraper/run-chatgpt-scraper-mcp.sh"
        }
      }
    }
@@ -326,7 +328,7 @@ playwright install chromium
 **Solution:**
 ```bash
 cd /path/to/parent/repo
-git submodule update --init mcp/chatgpt-scraper
+git submodule update --init mcp/web-scraper
 ```
 
 ## Development
@@ -334,7 +336,7 @@ git submodule update --init mcp/chatgpt-scraper
 ### Project Structure
 
 ```
-mcp/chatgpt-scraper/
+mcp/web-scraper/
 ├── __init__.py                      # Package initialization
 ├── chatgpt_scraper_mcp_server.py   # Main MCP server
 ├── scraper.py                       # Core scraping logic
