@@ -1,8 +1,6 @@
-# ChatGPT Scraper MCP Server
+# Web Scraper MCP Server
 
-MCP server for scraping ChatGPT conversations from shared links. Supports multiple scraping methods and provides tools for managing scraped conversations.
-
-> **Note:** This repository was renamed from `mcp-server-chatgpt-scraper` to `mcp-server-web-scraper` on GitHub, but the functionality remains focused on ChatGPT conversation scraping.
+MCP server for scraping web content. Currently supports ChatGPT conversations with plans to expand to additional sources (X/Twitter, etc.). Supports multiple scraping methods: Playwright, Apify, requests.
 
 ## Features
 
@@ -10,9 +8,21 @@ MCP server for scraping ChatGPT conversations from shared links. Supports multip
 - **Automatic Method Selection**: Tries methods in order until one succeeds
 - **1Password Integration**: Securely retrieve Apify API token from 1Password
 - **Auto-Install Dependencies**: Automatically installs missing packages
-- **Supports Both URL Types**: Works with `/share/` (public) and `/c/` (private) URLs
-- **Conversation Management**: List and retrieve previously scraped conversations
+- **Extensible Architecture**: Plugin-based design allows easy addition of new sources
 - **Flexible Storage**: Uses `$DATA_DIR` if available, otherwise config directory
+
+## Supported Sources
+
+### ChatGPT (Currently Implemented)
+- **URL Formats**: 
+  - `https://chatgpt.com/share/abc-123`
+  - `https://chatgpt.com/c/abc-123` (private)
+- **Methods**: Playwright, Apify, requests
+- **Storage**: `$DATA_DIR/imports/chatgpt/share_{id}.json`
+
+### Future Sources
+- X/Twitter (planned)
+- Additional sources can be added via plugin architecture
 
 ## Installation
 
@@ -84,6 +94,8 @@ If you have 1Password CLI set up, the server can automatically retrieve your Api
 3. Server will automatically use it if `APIFY_API_TOKEN` env var is not set
 
 ## MCP Tools
+
+> **Note:** Currently implements ChatGPT scraping. The repository name "web-scraper" reflects the intended extensibility for additional sources in the future.
 
 ### 1. scrape_chatgpt_conversation
 
