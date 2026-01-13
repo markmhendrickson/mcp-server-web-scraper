@@ -1,6 +1,6 @@
 # Web Scraper MCP Server
 
-MCP server for scraping web content. Currently supports ChatGPT conversations with plans to expand to additional sources (X/Twitter, etc.). Supports multiple scraping methods: Playwright, Apify, requests.
+MCP server for general-purpose web scraping. Supports multiple sources (ChatGPT, X/Twitter, etc.) via a plugin architecture. Uses multiple scraping methods: Playwright, Apify, requests.
 
 ## Features
 
@@ -13,16 +13,23 @@ MCP server for scraping web content. Currently supports ChatGPT conversations wi
 
 ## Supported Sources
 
-### ChatGPT (Currently Implemented)
+### ChatGPT
 - **URL Formats**: 
   - `https://chatgpt.com/share/abc-123`
   - `https://chatgpt.com/c/abc-123` (private)
 - **Methods**: Playwright, Apify, requests
 - **Storage**: `$DATA_DIR/imports/chatgpt/share_{id}.json`
 
-### Future Sources
-- X/Twitter (planned)
+### X/Twitter
+- **URL Formats**:
+  - `https://twitter.com/username/status/1234567890`
+  - `https://x.com/username/status/1234567890`
+- **Methods**: Apify (primary)
+- **Storage**: `$DATA_DIR/imports/twitter/tweet_{id}.json`
+
+### Extensibility
 - Additional sources can be added via plugin architecture
+- Create new plugin classes inheriting from `ScraperBase`
 
 ## Installation
 
@@ -95,30 +102,29 @@ If you have 1Password CLI set up, the server can automatically retrieve your Api
 
 ## MCP Tools
 
-> **Note:** Currently implements ChatGPT scraping. The repository name "web-scraper" reflects the intended extensibility for additional sources in the future.
+### 1. scrape_content
 
-### 1. scrape_chatgpt_conversation
-
-Scrape a ChatGPT conversation from a share URL.
+Scrape content from any supported source. Automatically detects source from URL.
 
 **Parameters:**
-- `url` (required): ChatGPT share URL
-  - Supports: `https://chatgpt.com/share/abc-123`
-  - Supports: `https://chatgpt.com/c/abc-123` (private, requires auth)
+- `url` (required): URL to scrape
+  - ChatGPT: `https://chatgpt.com/share/abc-123` or `https://chatgpt.com/c/abc-123`
+  - Twitter/X: `https://twitter.com/username/status/1234567890` or `https://x.com/username/status/1234567890`
 - `method` (optional): Scraping method - "auto", "playwright", "apify", or "requests"
-  - Default: "auto" (tries Playwright → Apify → requests)
+  - Default: "auto" (tries methods in order)
 - `output_path` (optional): Custom output file path
-  - Default: `$DATA_DIR/imports/chatgpt/share_{id}.json`
+  - Default: `$DATA_DIR/imports/{source}/{id}.json`
 
 **Returns:**
 ```json
 {
   "success": true,
-  "share_id": "abc-123",
+  "source": "chatgpt",
+  "content_id": "abc-123",
   "output_path": "/path/to/file.json",
+  "method_used": "playwright",
   "message_count": 9,
-  "title": "Conversation Title",
-  "method_used": "playwright"
+  "title": "Conversation Title"
 }
 ```
 
@@ -130,23 +136,24 @@ Scrape a ChatGPT conversation from a share URL.
 }
 ```
 
-### 2. list_scraped_conversations
+### 2. list_scraped_content
 
-List previously scraped conversations.
+List previously scraped content.
 
 **Parameters:**
+- `source` (optional): Filter by source ("chatgpt", "twitter", or "all")
+  - Default: "all"
 - `limit` (optional): Maximum number to return (default: 50)
-- `sort_by` (optional): Sort order - "date", "title", or "message_count" (default: "date")
+- `sort_by` (optional): Sort order - "date" or "source" (default: "date")
 
 **Returns:**
 ```json
 {
-  "conversations": [
+  "content": [
     {
-      "share_id": "abc-123",
-      "title": "Conversation Title",
+      "source": "chatgpt",
+      "content_id": "abc-123",
       "file_path": "/path/to/file.json",
-      "message_count": 9,
       "scraped_at": 1768198678
     }
   ],
@@ -155,48 +162,44 @@ List previously scraped conversations.
 }
 ```
 
-**Example:**
-```json
-{
-  "limit": 10,
-  "sort_by": "date"
-}
-```
+### 3. get_scraped_content
 
-### 3. get_conversation_details
-
-Get details about a specific scraped conversation.
+Get details about specific scraped content.
 
 **Parameters:**
-- `share_id` (required): ChatGPT share ID (e.g., "abc-123")
+- `source` (required): Source type ("chatgpt", "twitter")
+- `content_id` (required): Content ID (e.g., share ID for ChatGPT, tweet ID for Twitter)
 
 **Returns:**
 ```json
 {
-  "share_id": "abc-123",
-  "title": "Conversation Title",
+  "source": "chatgpt",
+  "content_id": "abc-123",
   "file_path": "/path/to/file.json",
-  "message_count": 9,
-  "scraped_at": 1768198678,
-  "messages": [
-    {
-      "role": "user",
-      "text": "Message text...",
-      "create_time": 1768198138
-    },
-    {
-      "role": "assistant",
-      "text": "Response text...",
-      "create_time": 1768198198
-    }
-  ]
+  "data": { ... }
 }
 ```
 
-**Example:**
+### 4. list_supported_sources
+
+List all supported scraping sources.
+
+**Returns:**
 ```json
 {
-  "share_id": "69638b9a-bc18-8012-aed2-10ec1e043823"
+  "sources": [
+    {
+      "name": "chatgpt",
+      "supported_methods": ["playwright", "apify", "requests"],
+      "description": "Scraper for chatgpt"
+    },
+    {
+      "name": "twitter",
+      "supported_methods": ["apify"],
+      "description": "Scraper for twitter"
+    }
+  ],
+  "total": 2
 }
 ```
 
@@ -209,7 +212,7 @@ Get details about a specific scraped conversation.
    {
      "mcpServers": {
        "web-scraper": {
-         "command": "/absolute/path/to/mcp/web-scraper/run-chatgpt-scraper-mcp.sh"
+         "command": "/absolute/path/to/mcp/web-scraper/run-web-scraper-mcp.sh"
        }
      }
    }
@@ -217,17 +220,18 @@ Get details about a specific scraped conversation.
 
 2. **Use tools in Cursor**:
    - Ask Cursor to scrape a ChatGPT conversation
-   - Ask Cursor to list your scraped conversations
-   - Ask Cursor to show details about a specific conversation
+   - Ask Cursor to scrape a Twitter/X post
+   - Ask Cursor to list your scraped content
+   - Ask Cursor to show details about specific content
 
 ### Via Command Line (Testing)
 
 ```bash
 # Run MCP server
-./run-chatgpt-scraper-mcp.sh
+./run-web-scraper-mcp.sh
 
 # Or run directly
-python3 chatgpt_scraper_mcp_server.py
+python3 web_scraper_mcp_server.py
 ```
 
 ## Scraping Methods
@@ -343,6 +347,15 @@ cd /path/to/parent/repo
 git submodule update --init mcp/web-scraper
 ```
 
+### Unsupported URL
+
+**Problem:** "Unsupported URL" error
+
+**Solution:**
+- Check that URL matches supported formats
+- Use `list_supported_sources` tool to see available sources
+- Add new source plugin if needed
+
 ## Development
 
 ### Project Structure
@@ -350,9 +363,15 @@ git submodule update --init mcp/web-scraper
 ```
 mcp/web-scraper/
 ├── __init__.py                      # Package initialization
-├── chatgpt_scraper_mcp_server.py   # Main MCP server
-├── scraper.py                       # Core scraping logic
-├── run-chatgpt-scraper-mcp.sh      # Wrapper script
+├── web_scraper_mcp_server.py       # Main MCP server
+├── scraper_base.py                  # Base scraper interface
+├── scraper_registry.py              # Scraper registry
+├── scraper.py                       # ChatGPT scraping logic
+├── plugins/
+│   ├── __init__.py
+│   ├── chatgpt_scraper.py          # ChatGPT plugin
+│   └── twitter_scraper.py           # Twitter/X plugin
+├── run-web-scraper-mcp.sh          # Wrapper script
 ├── requirements.txt                 # Python dependencies
 └── README.md                        # This file
 ```
@@ -360,20 +379,44 @@ mcp/web-scraper/
 ### Testing
 
 ```bash
-# Test Playwright method
+# Test ChatGPT scraper
 python3 -c "
-from scraper import scrape_with_playwright
-result = scrape_with_playwright('https://chatgpt.com/share/YOUR_SHARE_ID')
+from plugins.chatgpt_scraper import ChatGPTScraper
+scraper = ChatGPTScraper()
+result = scraper.scrape('https://chatgpt.com/share/YOUR_SHARE_ID')
 print(f'Found {len(result.get(\"messages\", []))} messages')
 "
 
-# Test Apify method (requires token)
+# Test Twitter scraper (requires Apify token)
 python3 -c "
-from scraper import scrape_with_apify
-result = scrape_with_apify('https://chatgpt.com/share/YOUR_SHARE_ID')
-print(f'Found {len(result.get(\"messages\", []))} messages')
+from plugins.twitter_scraper import TwitterScraper
+scraper = TwitterScraper()
+result = scraper.scrape('https://twitter.com/username/status/TWEET_ID')
+print(result)
 "
 ```
+
+## Adding New Sources
+
+To add a new source, create a plugin class:
+
+1. **Create plugin file** in `plugins/` directory:
+   ```python
+   from scraper_base import ScraperBase
+   
+   class MySourceScraper(ScraperBase):
+       @property
+       def source_name(self) -> str:
+           return "mysource"
+       
+       # Implement required methods...
+   ```
+
+2. **Register in main server** (`web_scraper_mcp_server.py`):
+   ```python
+   from plugins.my_source_scraper import MySourceScraper
+   registry.register(MySourceScraper())
+   ```
 
 ## License
 
@@ -386,4 +429,5 @@ Contributions welcome! Please submit issues and pull requests to the GitHub repo
 ## Related Projects
 
 - [conversation_parser.py](../../execution/scripts/conversation_parser.py) - Parse and analyze scraped conversations
-- [Apify ChatGPT Scraper](https://apify.com/straightforward_understanding/chatgpt-conversation-scraper) - Apify actor used by this server
+- [Apify ChatGPT Scraper](https://apify.com/straightforward_understanding/chatgpt-conversation-scraper) - Apify actor used for ChatGPT scraping
+- [Apify Twitter Scraper](https://apify.com/apify/twitter-scraper) - Apify actor used for Twitter/X scraping

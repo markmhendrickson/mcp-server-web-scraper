@@ -34,7 +34,7 @@ echo ""
 # Create repo and push
 gh repo create mcp-server-web-scraper \
     --public \
-    --description "MCP server for web scraping. Currently supports ChatGPT conversations with extensible plugin architecture for additional sources. Multiple scraping methods: Playwright, Apify, requests." \
+    --description "MCP server for web scraping. Supports ChatGPT conversations and X/Twitter posts via extensible plugin architecture. Multiple scraping methods: Playwright, Apify, requests." \
     --source=. \
     --remote=origin \
     --push
