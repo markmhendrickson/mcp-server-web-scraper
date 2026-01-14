@@ -145,7 +145,10 @@ class TwitterScraper(ScraperBase):
         credentials: dict[str, str | None] | None = None,
     ) -> dict[str, Any]:
         """Scrape Twitter post using Apify."""
-        if not APIFY_AVAILABLE:
+        # Check for apify-client at runtime (not just import time)
+        try:
+            from apify_client import ApifyClient
+        except ImportError:
             raise ImportError(
                 "apify-client not installed. Install with: pip install apify-client"
             )
@@ -168,7 +171,12 @@ class TwitterScraper(ScraperBase):
             )
         
         # Use Apify's Twitter Scraper actor
+<<<<<<< HEAD
         # Try free actor first, fallback to paid actor if needed
+=======
+        # Try multiple possible actor names
+        # Import here to ensure we're using the right environment
+        from apify_client import ApifyClient
         client = ApifyClient(apify_token)
         
         print(f"Running Apify Twitter scraper for: {url}")
@@ -190,8 +198,16 @@ class TwitterScraper(ScraperBase):
                 print(f"Free actor failed, trying paid actor: {e}")
                 run = client.actor("apidojo/tweet-scraper").call(
                     run_input={
-                        "startUrls": [{"url": url}],
-                        "maxTweets": 0,  # 0 = all available tweets
+                        "startUrls": [url],
+                        "maxItems": 1000,
+                        "sort": "Latest",
+                        "tweetLanguage": "en",
+                        "includeSearchTerms": False,
+                        "onlyImage": False,
+                        "onlyQuote": False,
+                        "onlyTwitterBlue": False,
+                        "onlyVerifiedUsers": False,
+                        "onlyVideo": False,
                     },
                     timeout_secs=600,
                 )
@@ -201,7 +217,7 @@ class TwitterScraper(ScraperBase):
                 run_input={
                     "urls": [url],
                 },
-                timeout_secs=300,
+                timeout_secs=600,
             )
         else:
             raise ValueError(
