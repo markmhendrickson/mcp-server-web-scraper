@@ -24,6 +24,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 from scraper_registry import ScraperRegistry
 from plugins.chatgpt_scraper import ChatGPTScraper
 from plugins.twitter_scraper import TwitterScraper
+from plugins.spotify_scraper import SpotifyScraper
 
 # Configuration directory
 CONFIG_DIR = Path.home() / ".config" / "web-scraper"
@@ -50,6 +51,11 @@ try:
     registry.register(TwitterScraper())
 except Exception as e:
     print(f"Warning: Could not register Twitter scraper: {e}", file=sys.stderr)
+
+try:
+    registry.register(SpotifyScraper())
+except Exception as e:
+    print(f"Warning: Could not register Spotify scraper: {e}", file=sys.stderr)
 
 
 def load_credentials_from_env() -> dict[str, str | None]:
@@ -148,7 +154,9 @@ async def list_tools() -> list[Tool]:
                         "description": (
                             "URL to scrape. Supported formats:\n"
                             "- ChatGPT: https://chatgpt.com/share/abc-123 or https://chatgpt.com/c/abc-123\n"
-                            "- Twitter/X: https://twitter.com/username/status/1234567890 or https://x.com/username/status/1234567890"
+                            "- Twitter/X (single tweet): https://twitter.com/username/status/1234567890 or https://x.com/username/status/1234567890\n"
+                            "- Twitter/X (account profile - scrapes all tweets): https://twitter.com/username or https://x.com/username\n"
+                            "- Spotify (playlist): https://open.spotify.com/playlist/PLAYLIST_ID"
                         )
                     },
                     "method": {
@@ -209,7 +217,7 @@ async def list_tools() -> list[Tool]:
                     },
                     "content_id": {
                         "type": "string",
-                        "description": "Content ID (e.g., share ID for ChatGPT, tweet ID for Twitter)"
+                        "description": "Content ID (e.g., share ID for ChatGPT, tweet ID for Twitter, playlist ID for Spotify)"
                     }
                 },
                 "required": ["source", "content_id"]
@@ -299,27 +307,64 @@ async def handle_scrape_content(args: dict) -> list[TextContent]:
         # Normalize output
         normalized_data = scraper.normalize_output(scraped_data, source_id)
         
-        # Save to file
-        output_file.parent.mkdir(parents=True, exist_ok=True)
-        with open(output_file, "w", encoding="utf-8") as f:
-            json.dump(normalized_data, f, indent=2, ensure_ascii=False)
-        
-        # Return result
-        result = {
-            "success": True,
-            "source": scraper.source_name,
-            "content_id": source_id,
-            "output_path": str(output_file),
-            "method_used": method if method != "auto" else "auto (method determined by scraper)",
-        }
-        
-        # Add source-specific metadata
-        if scraper.source_name == "chatgpt":
-            result["message_count"] = len(normalized_data.get("mapping", {}))
-            result["title"] = normalized_data.get("title", "ChatGPT Conversation")
-        elif scraper.source_name == "twitter":
-            result["username"] = normalized_data.get("username", "")
-            result["text_preview"] = normalized_data.get("text", "")[:100] + "..." if len(normalized_data.get("text", "")) > 100 else normalized_data.get("text", "")
+        # Check if this is multiple tweets (profile scraping) or single content
+        if isinstance(normalized_data, list):
+            # Multiple tweets from profile scraping
+            data_dir = get_data_dir()
+            output_paths = []
+            
+            for tweet_data in normalized_data:
+                tweet_id = tweet_data.get("tweet_id", "unknown")
+                tweet_output_file = scraper.get_storage_path(tweet_id, data_dir)
+                tweet_output_file.parent.mkdir(parents=True, exist_ok=True)
+                
+                with open(tweet_output_file, "w", encoding="utf-8") as f:
+                    json.dump(tweet_data, f, indent=2, ensure_ascii=False)
+                
+                output_paths.append(str(tweet_output_file))
+            
+            # Return result for multiple tweets
+            result = {
+                "success": True,
+                "source": scraper.source_name,
+                "account": source_id,
+                "tweets_scraped": len(normalized_data),
+                "output_paths": output_paths,
+                "method_used": method if method != "auto" else "auto (method determined by scraper)",
+            }
+            
+            # Add preview of first few tweets
+            if normalized_data:
+                result["sample_tweets"] = [
+                    {
+                        "tweet_id": tweet.get("tweet_id"),
+                        "text_preview": tweet.get("text", "")[:100] + "..." if len(tweet.get("text", "")) > 100 else tweet.get("text", "")
+                    }
+                    for tweet in normalized_data[:3]  # Show first 3 tweets
+                ]
+        else:
+            # Single content (tweet or other source)
+            # Save to file
+            output_file.parent.mkdir(parents=True, exist_ok=True)
+            with open(output_file, "w", encoding="utf-8") as f:
+                json.dump(normalized_data, f, indent=2, ensure_ascii=False)
+            
+            # Return result
+            result = {
+                "success": True,
+                "source": scraper.source_name,
+                "content_id": source_id,
+                "output_path": str(output_file),
+                "method_used": method if method != "auto" else "auto (method determined by scraper)",
+            }
+            
+            # Add source-specific metadata
+            if scraper.source_name == "chatgpt":
+                result["message_count"] = len(normalized_data.get("mapping", {}))
+                result["title"] = normalized_data.get("title", "ChatGPT Conversation")
+            elif scraper.source_name == "twitter":
+                result["username"] = normalized_data.get("username", "")
+                result["text_preview"] = normalized_data.get("text", "")[:100] + "..." if len(normalized_data.get("text", "")) > 100 else normalized_data.get("text", "")
         
         return [TextContent(type="text", text=json.dumps(result, indent=2))]
     

@@ -22,10 +22,13 @@ MCP server for general-purpose web scraping. Supports multiple sources (ChatGPT,
 
 ### X/Twitter
 - **URL Formats**:
-  - `https://twitter.com/username/status/1234567890`
-  - `https://x.com/username/status/1234567890`
+  - Single tweet: `https://twitter.com/username/status/1234567890` or `https://x.com/username/status/1234567890`
+  - Account profile (all tweets): `https://twitter.com/username` or `https://x.com/username`
 - **Methods**: Apify (primary)
-- **Storage**: `$DATA_DIR/imports/twitter/tweet_{id}.json`
+- **Storage**: 
+  - Single tweet: `$DATA_DIR/imports/twitter/tweet_{id}.json`
+  - Account profile: One file per tweet in `$DATA_DIR/imports/twitter/tweet_{id}.json`
+- **Profile Scraping**: When scraping an account profile, all available tweets are fetched and each tweet is saved to a separate JSON file
 
 ### Extensibility
 - Additional sources can be added via plugin architecture
@@ -109,13 +112,15 @@ Scrape content from any supported source. Automatically detects source from URL.
 **Parameters:**
 - `url` (required): URL to scrape
   - ChatGPT: `https://chatgpt.com/share/abc-123` or `https://chatgpt.com/c/abc-123`
-  - Twitter/X: `https://twitter.com/username/status/1234567890` or `https://x.com/username/status/1234567890`
+  - Twitter/X (single tweet): `https://twitter.com/username/status/1234567890` or `https://x.com/username/status/1234567890`
+  - Twitter/X (account profile): `https://twitter.com/username` or `https://x.com/username` (scrapes all tweets)
 - `method` (optional): Scraping method - "auto", "playwright", "apify", or "requests"
   - Default: "auto" (tries methods in order)
 - `output_path` (optional): Custom output file path
   - Default: `$DATA_DIR/imports/{source}/{id}.json`
+  - Note: For profile scraping, each tweet gets its own file
 
-**Returns:**
+**Returns (single content):**
 ```json
 {
   "success": true,
@@ -128,11 +133,38 @@ Scrape content from any supported source. Automatically detects source from URL.
 }
 ```
 
-**Example:**
+**Returns (profile scraping):**
+```json
+{
+  "success": true,
+  "source": "twitter",
+  "account": "username",
+  "tweets_scraped": 150,
+  "output_paths": [
+    "/path/to/tweet_123.json",
+    "/path/to/tweet_456.json"
+  ],
+  "sample_tweets": [
+    {
+      "tweet_id": "123",
+      "text_preview": "First tweet text..."
+    }
+  ]
+}
+```
+
+**Examples:**
 ```json
 {
   "url": "https://chatgpt.com/share/69638b9a-bc18-8012-aed2-10ec1e043823",
   "method": "auto"
+}
+```
+
+```json
+{
+  "url": "https://twitter.com/username",
+  "method": "apify"
 }
 ```
 
@@ -220,7 +252,8 @@ List all supported scraping sources.
 
 2. **Use tools in Cursor**:
    - Ask Cursor to scrape a ChatGPT conversation
-   - Ask Cursor to scrape a Twitter/X post
+   - Ask Cursor to scrape a Twitter/X post (single tweet)
+   - Ask Cursor to scrape all tweets from a Twitter/X account (profile scraping)
    - Ask Cursor to list your scraped content
    - Ask Cursor to show details about specific content
 
@@ -387,12 +420,20 @@ result = scraper.scrape('https://chatgpt.com/share/YOUR_SHARE_ID')
 print(f'Found {len(result.get(\"messages\", []))} messages')
 "
 
-# Test Twitter scraper (requires Apify token)
+# Test Twitter scraper - single tweet (requires Apify token)
 python3 -c "
 from plugins.twitter_scraper import TwitterScraper
 scraper = TwitterScraper()
 result = scraper.scrape('https://twitter.com/username/status/TWEET_ID')
 print(result)
+"
+
+# Test Twitter scraper - profile (all tweets, requires Apify token)
+python3 -c "
+from plugins.twitter_scraper import TwitterScraper
+scraper = TwitterScraper()
+result = scraper.scrape('https://twitter.com/username')
+print(f'Found {len(result.get(\"tweets\", []))} tweets')
 "
 ```
 

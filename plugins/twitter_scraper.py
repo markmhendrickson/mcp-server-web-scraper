@@ -90,8 +90,19 @@ def extract_tweet_id(url: str) -> str:
 
 def extract_username(url: str) -> str | None:
     """Extract username from X/Twitter URL."""
-    match = re.search(r"/(?:twitter|x)\.com/(\w+)/", url)
+    # Remove trailing slash for consistent matching
+    url = url.rstrip('/')
+    # Match username after domain, before any additional path
+    match = re.search(r"(?:twitter|x)\.com/(\w+)(?:/|$)", url)
     return match.group(1) if match else None
+
+
+def is_profile_url(url: str) -> bool:
+    """Check if URL is a profile URL (not a tweet)."""
+    return (
+        ("twitter.com/" in url or "x.com/" in url)
+        and "/status/" not in url
+    )
 
 
 class TwitterScraper(ScraperBase):
@@ -113,11 +124,19 @@ class TwitterScraper(ScraperBase):
         )
     
     def extract_id(self, url: str) -> str:
-        """Extract tweet ID from Twitter URL."""
-        try:
-            return extract_tweet_id(url)
-        except ValueError as e:
-            raise ValueError(f"Invalid Twitter URL: {e}")
+        """Extract tweet ID or username from Twitter URL."""
+        if is_profile_url(url):
+            # Profile URL - extract username
+            username = extract_username(url)
+            if not username:
+                raise ValueError(f"Could not extract username from URL: {url}")
+            return username
+        else:
+            # Tweet URL - extract tweet ID
+            try:
+                return extract_tweet_id(url)
+            except ValueError as e:
+                raise ValueError(f"Invalid Twitter URL: {e}")
     
     def scrape(
         self,
@@ -149,27 +168,46 @@ class TwitterScraper(ScraperBase):
             )
         
         # Use Apify's Twitter Scraper actor
-        # Actor ID: apify/twitter-scraper
+        # Try free actor first, fallback to paid actor if needed
         client = ApifyClient(apify_token)
         
         print(f"Running Apify Twitter scraper for: {url}")
         
         # Check if it's a single tweet or user profile
-        if "/status/" in url:
-            # Single tweet
-            run = client.actor("apify/twitter-scraper").call(
+        if is_profile_url(url):
+            # User profile - scrape all tweets
+            print(f"Scraping all tweets from profile: {url}")
+            # Try free actor first
+            try:
+                run = client.actor("coder_luffy/free-tweet-scraper").call(
+                    run_input={
+                        "urls": [url],
+                    },
+                    timeout_secs=600,
+                )
+            except Exception as e:
+                # Fallback to paid actor if free one doesn't support profiles
+                print(f"Free actor failed, trying paid actor: {e}")
+                run = client.actor("apidojo/tweet-scraper").call(
+                    run_input={
+                        "startUrls": [{"url": url}],
+                        "maxTweets": 0,  # 0 = all available tweets
+                    },
+                    timeout_secs=600,
+                )
+        elif "/status/" in url:
+            # Single tweet - use free actor
+            run = client.actor("coder_luffy/free-tweet-scraper").call(
                 run_input={
-                    "startUrls": [{"url": url}],
-                    "addUserInfo": False,
-                    "tweetsDesired": 1,
+                    "urls": [url],
                 },
                 timeout_secs=300,
             )
         else:
-            # User profile or search - not supported in this version
             raise ValueError(
-                "Only single tweet URLs are supported. "
-                "Use format: https://twitter.com/username/status/TWEET_ID"
+                "Unsupported Twitter URL format. "
+                "Use: https://twitter.com/username (profile) or "
+                "https://twitter.com/username/status/TWEET_ID (single tweet)"
             )
         
         # Wait for run to finish
@@ -193,40 +231,73 @@ class TwitterScraper(ScraperBase):
         if not items:
             raise ValueError("No tweet data extracted by Apify")
         
-        # Return first item (should be the tweet)
-        return items[0]
+        # Return all items for profile URLs, single item for tweet URLs
+        if is_profile_url(url):
+            return {"tweets": items, "is_profile": True, "url": url}
+        else:
+            return items[0]
     
     def normalize_output(
         self,
         scraped_data: dict[str, Any],
         source_id: str,
-    ) -> dict[str, Any]:
+    ) -> dict[str, Any] | list[dict[str, Any]]:
         """Normalize Twitter data to common format."""
-        # Apify returns tweet data in their format
-        # Normalize to a common structure
         current_time = int(time.time())
         
+        # Check if this is profile scraping (multiple tweets)
+        if scraped_data.get("is_profile"):
+            tweets = scraped_data.get("tweets", [])
+            normalized_tweets = []
+            
+            for tweet in tweets:
+                # Extract tweet ID from tweet data or URL
+                tweet_id = tweet.get("id", "")
+                if not tweet_id:
+                    # Try to extract from URL
+                    tweet_url = tweet.get("url", "")
+                    if "/status/" in tweet_url:
+                        try:
+                            tweet_id = extract_tweet_id(tweet_url)
+                        except ValueError:
+                            tweet_id = f"unknown_{len(normalized_tweets)}"
+                
+                normalized_tweet = self._normalize_single_tweet(tweet, tweet_id, current_time)
+                normalized_tweets.append(normalized_tweet)
+            
+            return normalized_tweets
+        else:
+            # Single tweet
+            return self._normalize_single_tweet(scraped_data, source_id, current_time)
+    
+    def _normalize_single_tweet(
+        self,
+        tweet_data: dict[str, Any],
+        tweet_id: str,
+        scraped_at: int,
+    ) -> dict[str, Any]:
+        """Normalize a single tweet to common format."""
         # Extract tweet fields from Apify format
-        text = scraped_data.get("text", "")
-        author = scraped_data.get("author", {})
+        text = tweet_data.get("text", "")
+        author = tweet_data.get("author", {})
         username = author.get("username", "") if isinstance(author, dict) else str(author)
-        created_at = scraped_data.get("createdAt", current_time)
-        likes = scraped_data.get("likeCount", 0)
-        retweets = scraped_data.get("retweetCount", 0)
-        replies = scraped_data.get("replyCount", 0)
+        created_at = tweet_data.get("createdAt", scraped_at)
+        likes = tweet_data.get("likeCount", 0)
+        retweets = tweet_data.get("retweetCount", 0)
+        replies = tweet_data.get("replyCount", 0)
         
         return {
             "source": "twitter",
-            "tweet_id": source_id,
+            "tweet_id": tweet_id,
             "username": username,
             "text": text,
             "created_at": created_at,
             "likes": likes,
             "retweets": retweets,
             "replies": replies,
-            "url": scraped_data.get("url", ""),
-            "scraped_at": current_time,
-            "raw_data": scraped_data,  # Keep original for reference
+            "url": tweet_data.get("url", ""),
+            "scraped_at": scraped_at,
+            "raw_data": tweet_data,  # Keep original for reference
         }
     
     def get_storage_path(self, source_id: str, data_dir: Path) -> Path:
