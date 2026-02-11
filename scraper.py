@@ -634,11 +634,17 @@ def scrape_with_apify(share_url: str, api_token: str | None = None) -> dict[str,
     if not items:
         raise ValueError("No conversation data extracted by Apify")
 
-    # Apify returns items with conversation data
-    # Structure may vary, but typically has messages array
-    conversation_data = items[0] if items else {}
-
-    return conversation_data
+    # Apify chatgpt-conversation-scraper returns one dataset item per message
+    # (role, content, messageIndex, conversationTitle, url, etc.)
+    first = items[0]
+    title = first.get("conversationTitle") or first.get("title") or "ChatGPT Conversation"
+    messages = []
+    for it in sorted(items, key=lambda x: x.get("messageIndex", 0)):
+        role = it.get("role", "user")
+        content = it.get("content") or it.get("text") or ""
+        if content or it.get("messageIndex") is not None:
+            messages.append({"role": role, "text": content, "content": content})
+    return {"messages": messages, "title": title, "url": share_url}
 
 
 def scrape_with_requests(share_url: str) -> dict[str, Any]:

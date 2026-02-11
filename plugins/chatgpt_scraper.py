@@ -8,10 +8,6 @@ import sys
 from pathlib import Path
 from typing import Any
 
-import sys
-from pathlib import Path
-from typing import Any
-
 # Add parent directory to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
@@ -75,12 +71,8 @@ class ChatGPTScraper(ScraperBase):
         if not apify_token:
             apify_token = get_apify_token_from_1password()
         
-        # Determine methods to try
-        methods_to_try = []
-        if method == "auto":
-            methods_to_try = ["playwright", "apify", "requests"]
-        else:
-            methods_to_try = [method]
+        # ChatGPT always uses Apify (reliable extraction; share pages are JS-heavy)
+        methods_to_try = ["apify"]
         
         errors = []
         for scrape_method in methods_to_try:

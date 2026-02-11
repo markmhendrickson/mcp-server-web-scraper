@@ -29,6 +29,7 @@ MCP server for general-purpose web scraping. Supports multiple sources (ChatGPT,
   - Single tweet: `$DATA_DIR/imports/twitter/tweet_{id}.json`
   - Account profile: One file per tweet in `$DATA_DIR/imports/twitter/tweet_{id}.json`
 - **Profile Scraping**: When scraping an account profile, all available tweets are fetched and each tweet is saved to a separate JSON file
+- **Referenced content**: Tweet links are scraped (Apify for X tweets; for X article URLs we try several Apify actors in order until one returns actual content, then fallback to Playwright). Article actors tried: `apidojo/twitter-scraper-lite`, `pratikdani/twitter-posts-scraper`, `web.harvester/twitter-scraper`, `scrapier/twitter-x-scraper`, `xtdata/twitter-x-scraper`, `apify/website-content-crawler`. Cookie/consent pages are rejected; x.com may still only serve cookie walls for `/i/article/` URLs.
 
 ### Extensibility
 - Additional sources can be added via plugin architecture

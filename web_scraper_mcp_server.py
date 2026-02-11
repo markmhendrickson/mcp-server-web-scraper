@@ -25,6 +25,8 @@ from scraper_registry import ScraperRegistry
 from plugins.chatgpt_scraper import ChatGPTScraper
 from plugins.twitter_scraper import TwitterScraper
 from plugins.spotify_scraper import SpotifyScraper
+from plugins.nyt_podcast_scraper import NYTPodcastScraper
+from plugins.metacast_scraper import MetacastScraper
 
 # Configuration directory
 CONFIG_DIR = Path.home() / ".config" / "web-scraper"
@@ -57,6 +59,16 @@ try:
 except Exception as e:
     print(f"Warning: Could not register Spotify scraper: {e}", file=sys.stderr)
 
+try:
+    registry.register(NYTPodcastScraper())
+except Exception as e:
+    print(f"Warning: Could not register NYT Podcast scraper: {e}", file=sys.stderr)
+
+try:
+    registry.register(MetacastScraper())
+except Exception as e:
+    print(f"Warning: Could not register Metacast scraper: {e}", file=sys.stderr)
+
 
 def load_credentials_from_env() -> dict[str, str | None]:
     """Load credentials from environment variables or .env file."""
@@ -88,9 +100,13 @@ def load_credentials_from_env() -> dict[str, str | None]:
         except Exception:
             pass
 
-    # Priority: environment variables > local .env > config directory .env
+    # Priority: environment variables > local .env > repo root .env > config directory .env
     if not credentials["apify_token"] or not credentials["data_dir"]:
         load_from_file(LOCAL_ENV_FILE)
+        if not credentials["apify_token"] or not credentials["data_dir"]:
+            # Repo root .env (e.g. ateles/.env when web-scraper is mcp/web-scraper)
+            repo_root_env = SERVER_DIR.parent.parent / ".env"
+            load_from_file(repo_root_env)
         if not credentials["apify_token"] or not credentials["data_dir"]:
             load_from_file(ENV_FILE)
 
@@ -156,7 +172,9 @@ async def list_tools() -> list[Tool]:
                             "- ChatGPT: https://chatgpt.com/share/abc-123 or https://chatgpt.com/c/abc-123\n"
                             "- Twitter/X (single tweet): https://twitter.com/username/status/1234567890 or https://x.com/username/status/1234567890\n"
                             "- Twitter/X (account profile - scrapes all tweets): https://twitter.com/username or https://x.com/username\n"
-                            "- Spotify (playlist): https://open.spotify.com/playlist/PLAYLIST_ID"
+                            "- Spotify (playlist): https://open.spotify.com/playlist/PLAYLIST_ID\n"
+                            "- NYT Podcast (episode): https://www.nytimes.com/YYYY/MM/DD/podcasts/episode-slug.html\n"
+                            "- Metacast (podcast episode): https://metacast.app/podcast/show-id/episode-slug/episode-id"
                         )
                     },
                     "method": {
@@ -174,6 +192,15 @@ async def list_tools() -> list[Tool]:
                             "Optional: Custom output file path. "
                             "If not provided, saves to $DATA_DIR/imports/{source}/{id}.json"
                         )
+                    },
+                    "max_tweets": {
+                        "type": "integer",
+                        "description": (
+                            "For Twitter/X profile URLs: maximum number of tweets to scrape (e.g. 100). "
+                            "Uses Apify paid actor. Ignored for single tweets."
+                        ),
+                        "minimum": 1,
+                        "maximum": 500
                     }
                 },
                 "required": ["url"]
@@ -255,6 +282,7 @@ async def handle_scrape_content(args: dict) -> list[TextContent]:
         url = args.get("url")
         method = args.get("method", "auto")
         output_path = args.get("output_path")
+        max_tweets = args.get("max_tweets")
         
         if not url:
             return [TextContent(
@@ -294,7 +322,25 @@ async def handle_scrape_content(args: dict) -> list[TextContent]:
         
         # Scrape content
         try:
-            scraped_data = scraper.scrape(url, method=method, credentials=credentials)
+            # Run sync scrape in a thread to avoid asyncio conflicts with Playwright
+            # Create a new event loop in the thread to avoid conflicts
+            import concurrent.futures
+            scrape_options = {"max_tweets": max_tweets} if max_tweets is not None else {}
+            def _run_scrape():
+                # Create a new event loop in this thread (no existing loop)
+                import asyncio
+                try:
+                    # Try to get running loop - if it exists, we're in async context
+                    loop = asyncio.get_running_loop()
+                    # If we get here, we're in async context - this shouldn't happen in thread
+                    raise RuntimeError("Unexpected: event loop found in thread")
+                except RuntimeError:
+                    # No event loop - safe to use sync Playwright
+                    return scraper.scrape(url, method, credentials, **scrape_options)
+            
+            loop = asyncio.get_running_loop()
+            with concurrent.futures.ThreadPoolExecutor() as executor:
+                scraped_data = await loop.run_in_executor(executor, _run_scrape)
         except Exception as e:
             return [TextContent(
                 type="text",
@@ -323,6 +369,50 @@ async def handle_scrape_content(args: dict) -> list[TextContent]:
                 
                 output_paths.append(str(tweet_output_file))
             
+            # Also save combined file for import_tweets_as_posts (twitter_{username}_tweets.json)
+            if normalized_data and scraper.source_name == "twitter":
+                from datetime import datetime
+                username = source_id  # For profile URLs, source_id is the username
+                tmp_dir = data_dir / "tmp"
+                tmp_dir.mkdir(parents=True, exist_ok=True)
+                combined_path = tmp_dir / f"twitter_{username}_tweets.json"
+                import_tweets = []
+                for t in normalized_data:
+                    created = t.get("created_at")
+                    if isinstance(created, (int, float)):
+                        ts = datetime.utcfromtimestamp(created).strftime("%Y-%m-%dT%H:%M:%S.000Z")
+                    else:
+                        ts = str(created) if created else ""
+                    import_tweets.append({
+                        "tweet_id": t.get("tweet_id", ""),
+                        "username": t.get("username", username),
+                        "text": t.get("text", ""),
+                        "url": t.get("url", ""),
+                        "timestamp": ts,
+                        "replies": t.get("replies", 0),
+                        "retweets": t.get("retweets", 0),
+                        "likes": t.get("likes", 0),
+                        "quote_count": t.get("quote_count", 0),
+                        "bookmark_count": t.get("bookmark_count", 0),
+                        "is_reply": t.get("is_reply", False),
+                        "is_retweet": t.get("is_retweet", False),
+                        "is_quote": t.get("is_quote", False),
+                        "lang": t.get("lang", ""),
+                        "images": t.get("images", []),
+                        "author_name": t.get("author_name", ""),
+                        "author_profile_picture": t.get("author_profile_picture", ""),
+                        "scraped_at": datetime.utcnow().isoformat() + "Z",
+                    })
+                combined_payload = {
+                    "username": username,
+                    "scraped_at": datetime.utcnow().isoformat() + "Z",
+                    "tweet_count": len(import_tweets),
+                    "tweets": import_tweets,
+                }
+                with open(combined_path, "w", encoding="utf-8") as f:
+                    json.dump(combined_payload, f, indent=2, ensure_ascii=False)
+                output_paths.append(str(combined_path))
+            
             # Return result for multiple tweets
             result = {
                 "success": True,
@@ -332,6 +422,8 @@ async def handle_scrape_content(args: dict) -> list[TextContent]:
                 "output_paths": output_paths,
                 "method_used": method if method != "auto" else "auto (method determined by scraper)",
             }
+            if normalized_data and scraper.source_name == "twitter":
+                result["import_file"] = str(combined_path)
             
             # Add preview of first few tweets
             if normalized_data:
@@ -401,13 +493,31 @@ async def handle_list_content(args: dict) -> list[TextContent]:
                 continue
             
             # Find JSON files
-            pattern = "share_*.json" if source_name == "chatgpt" else "tweet_*.json"
+            if source_name == "chatgpt":
+                pattern = "share_*.json"
+            elif source_name == "twitter":
+                pattern = "tweet_*.json"
+            elif source_name == "spotify":
+                pattern = "playlist_*.json"
+            elif source_name == "nyt_podcast":
+                pattern = "episode_*.json"
+            elif source_name == "metacast":
+                pattern = "episode_*.json"
+            else:
+                pattern = "*.json"
+            
             for file_path in source_dir.glob(pattern):
                 try:
                     with open(file_path, "r", encoding="utf-8") as f:
                         data = json.load(f)
                     
-                    content_id = data.get("share_id") or data.get("tweet_id") or file_path.stem
+                    content_id = (
+                        data.get("share_id") 
+                        or data.get("tweet_id") 
+                        or data.get("playlist_id")
+                        or data.get("episode_id")
+                        or file_path.stem.replace("episode_", "")
+                    )
                     
                     all_content.append({
                         "source": source_name,
