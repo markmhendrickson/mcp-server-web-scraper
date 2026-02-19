@@ -26,24 +26,28 @@ CREDENTIALS_AVAILABLE = False
 # Try to import optional dependencies
 try:
     import requests
+
     REQUESTS_AVAILABLE = True
 except ImportError:
     pass
 
 try:
     from bs4 import BeautifulSoup
+
     BEAUTIFULSOUP_AVAILABLE = True
 except ImportError:
     pass
 
 try:
     from playwright.sync_api import sync_playwright
+
     PLAYWRIGHT_AVAILABLE = True
 except ImportError:
     pass
 
 try:
     from apify_client import ApifyClient
+
     APIFY_AVAILABLE = True
 except ImportError:
     pass
@@ -55,13 +59,14 @@ try:
     possible_paths = [
         server_dir.parent.parent,  # mcp/chatgpt-scraper -> mcp -> personal
     ]
-    
+
     for parent_path in possible_paths:
         credentials_path = parent_path / "execution" / "scripts" / "credentials.py"
         if credentials_path.exists():
             sys.path.insert(0, str(parent_path))
             try:
                 from execution.scripts.credentials import get_credential
+
                 CREDENTIALS_AVAILABLE = True
                 break
             except ImportError:
@@ -94,7 +99,7 @@ def ensure_package_installed(package_name: str, import_name: str | None = None) 
     """Ensure a package is installed, install if missing."""
     if import_name is None:
         import_name = package_name
-    
+
     try:
         __import__(import_name)
         return True
@@ -106,16 +111,16 @@ def get_apify_token_from_1password() -> str | None:
     """Get Apify API token from 1Password."""
     if not CREDENTIALS_AVAILABLE:
         return None
-    
+
     try:
         from execution.scripts.credentials import get_credential
-        
+
         # Try to get API token from 1Password item "Apify"
         # Field name variations: "API token", "api_token", "token", "API key"
         token = get_credential("Apify", vault="Private", field="API token")
         if token:
             return token
-        
+
         # Try other field name variations
         for field_name in ["api_token", "token", "API key", "apify_token"]:
             try:
@@ -124,7 +129,7 @@ def get_apify_token_from_1password() -> str | None:
                     return token
             except (ValueError, KeyError):
                 continue
-        
+
         return None
     except Exception as e:
         print(f"Warning: Could not get Apify token from 1Password: {e}")
@@ -192,20 +197,20 @@ def _extract_messages_from_mapping(data: dict[str, Any]) -> list[dict[str, Any]]
 def scrape_with_playwright(share_url: str, timeout: int = 60000) -> dict[str, Any]:
     """
     Scrape conversation using Playwright (handles JavaScript rendering).
-    
+
     Args:
         share_url: ChatGPT share URL
         timeout: Page load timeout in milliseconds
-        
+
     Returns:
         Dictionary with conversation data (messages, title, url)
-        
+
     Raises:
         ImportError: If playwright not installed
         Exception: If scraping fails
     """
     global PLAYWRIGHT_AVAILABLE
-    
+
     # Ensure playwright is installed
     if not PLAYWRIGHT_AVAILABLE:
         if not ensure_package_installed("playwright", "playwright"):
@@ -216,10 +221,11 @@ def scrape_with_playwright(share_url: str, timeout: int = 60000) -> dict[str, An
         # Re-import after installation
         try:
             from playwright.sync_api import sync_playwright
+
             PLAYWRIGHT_AVAILABLE = True
         except ImportError:
             raise ImportError("playwright installed but import failed")
-    
+
     # Import playwright after ensuring it's installed
     from playwright.sync_api import sync_playwright
 
@@ -279,8 +285,7 @@ def scrape_with_playwright(share_url: str, timeout: int = 60000) -> dict[str, An
 
             # Try to extract conversation from page
             # ChatGPT shared pages structure messages differently - try multiple approaches
-            conversation_data = page.evaluate(
-                r"""
+            conversation_data = page.evaluate(r"""
                 () => {
                     const messages = [];
 
@@ -441,8 +446,7 @@ def scrape_with_playwright(share_url: str, timeout: int = 60000) -> dict[str, An
                         url: window.location.href,
                     };
                 }
-            """
-            )
+            """)
 
             # Check if we got conversation data from API responses
             conversation_from_api = None
@@ -553,21 +557,21 @@ def scrape_with_playwright(share_url: str, timeout: int = 60000) -> dict[str, An
 def scrape_with_apify(share_url: str, api_token: str | None = None) -> dict[str, Any]:
     """
     Scrape conversation using Apify's ChatGPT Conversation Scraper.
-    
+
     Args:
         share_url: ChatGPT share URL
         api_token: Apify API token (optional, will try env var or 1Password)
-        
+
     Returns:
         Dictionary with conversation data
-        
+
     Raises:
         ImportError: If apify-client not installed
         ValueError: If API token not provided or found
         ValueError: If Apify scraping fails
     """
     global APIFY_AVAILABLE
-    
+
     # Ensure apify-client is installed
     if not APIFY_AVAILABLE:
         if not ensure_package_installed("apify-client", "apify_client"):
@@ -578,20 +582,21 @@ def scrape_with_apify(share_url: str, api_token: str | None = None) -> dict[str,
         # Re-import after installation
         try:
             from apify_client import ApifyClient
+
             APIFY_AVAILABLE = True
         except ImportError:
             raise ImportError("apify-client installed but import failed")
-    
+
     # Import after ensuring it's available
     from apify_client import ApifyClient
 
     # Get API token: try parameter, then env var, then 1Password
     if not api_token:
         api_token = os.getenv("APIFY_API_TOKEN")
-    
+
     if not api_token:
         api_token = get_apify_token_from_1password()
-    
+
     if not api_token:
         raise ValueError(
             "APIFY_API_TOKEN required. Set env var, pass api_token parameter, "
@@ -637,7 +642,9 @@ def scrape_with_apify(share_url: str, api_token: str | None = None) -> dict[str,
     # Apify chatgpt-conversation-scraper returns one dataset item per message
     # (role, content, messageIndex, conversationTitle, url, etc.)
     first = items[0]
-    title = first.get("conversationTitle") or first.get("title") or "ChatGPT Conversation"
+    title = (
+        first.get("conversationTitle") or first.get("title") or "ChatGPT Conversation"
+    )
     messages = []
     for it in sorted(items, key=lambda x: x.get("messageIndex", 0)):
         role = it.get("role", "user")
@@ -650,16 +657,16 @@ def scrape_with_apify(share_url: str, api_token: str | None = None) -> dict[str,
 def scrape_with_requests(share_url: str) -> dict[str, Any]:
     """
     Scrape conversation using requests and BeautifulSoup.
-    
+
     Limited - ChatGPT shared pages are mostly JavaScript-rendered,
     but we can try to extract any server-rendered content.
-    
+
     Args:
         share_url: ChatGPT share URL
-        
+
     Returns:
         Dictionary with conversation data
-        
+
     Raises:
         ImportError: If requests or beautifulsoup4 not installed
     """
@@ -667,7 +674,7 @@ def scrape_with_requests(share_url: str) -> dict[str, Any]:
     if not REQUESTS_AVAILABLE:
         if not ensure_package_installed("requests", "requests"):
             raise ImportError("requests not installed and installation failed")
-    
+
     if not BEAUTIFULSOUP_AVAILABLE:
         if not ensure_package_installed("beautifulsoup4", "bs4"):
             raise ImportError("beautifulsoup4 not installed and installation failed")
@@ -738,13 +745,13 @@ def convert_to_export_format(
 ) -> dict[str, Any]:
     """
     Convert scraped data to ChatGPT export JSON format.
-    
+
     Expected format has a 'mapping' structure with nodes containing messages.
-    
+
     Args:
         scraped_data: Raw scraped data
         share_id: ChatGPT share ID
-        
+
     Returns:
         Formatted conversation data in ChatGPT export format
     """
@@ -808,7 +815,7 @@ def convert_to_export_format(
 def save_conversation_json(data: dict[str, Any], output_path: Path) -> None:
     """
     Save conversation data to JSON file.
-    
+
     Args:
         data: Conversation data to save
         output_path: Path to output file

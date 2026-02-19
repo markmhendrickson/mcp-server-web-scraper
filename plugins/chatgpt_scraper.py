@@ -32,15 +32,15 @@ from scraper_base import ScraperBase
 
 class ChatGPTScraper(ScraperBase):
     """Scraper for ChatGPT conversations."""
-    
+
     @property
     def source_name(self) -> str:
         return "chatgpt"
-    
+
     @property
     def supported_methods(self) -> list[str]:
         return ["playwright", "apify", "requests"]
-    
+
     def can_handle(self, url: str) -> bool:
         """Check if URL is a ChatGPT share URL."""
         return (
@@ -48,14 +48,14 @@ class ChatGPTScraper(ScraperBase):
             or "chatgpt.com/c/" in url
             or "chat.openai.com/share/" in url
         )
-    
+
     def extract_id(self, url: str) -> str:
         """Extract share ID from ChatGPT URL."""
         try:
             return extract_share_id(url)
         except ValueError as e:
             raise ValueError(f"Invalid ChatGPT URL: {e}")
-    
+
     def scrape(
         self,
         url: str,
@@ -65,15 +65,15 @@ class ChatGPTScraper(ScraperBase):
         """Scrape ChatGPT conversation."""
         if credentials is None:
             credentials = {}
-        
+
         # Get Apify token
         apify_token = credentials.get("apify_token")
         if not apify_token:
             apify_token = get_apify_token_from_1password()
-        
+
         # ChatGPT always uses Apify (reliable extraction; share pages are JS-heavy)
         methods_to_try = ["apify"]
-        
+
         errors = []
         for scrape_method in methods_to_try:
             try:
@@ -89,9 +89,9 @@ class ChatGPTScraper(ScraperBase):
             except Exception as e:
                 errors.append(f"{scrape_method}: {str(e)}")
                 continue
-        
+
         raise ValueError(f"All scraping methods failed: {errors}")
-    
+
     def normalize_output(
         self,
         scraped_data: dict[str, Any],
@@ -99,7 +99,7 @@ class ChatGPTScraper(ScraperBase):
     ) -> dict[str, Any]:
         """Normalize ChatGPT data to export format."""
         return convert_to_export_format(scraped_data, source_id)
-    
+
     def get_storage_path(self, source_id: str, data_dir: Path) -> Path:
         """Get storage path for ChatGPT conversation."""
         return data_dir / "imports" / "chatgpt" / f"share_{source_id}.json"

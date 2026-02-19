@@ -14,6 +14,7 @@ from typing import Any
 APIFY_AVAILABLE = False
 try:
     from apify_client import ApifyClient
+
     APIFY_AVAILABLE = True
 except ImportError:
     pass
@@ -25,13 +26,14 @@ try:
     possible_paths = [
         server_dir.parent.parent,  # mcp/web-scraper -> mcp -> personal
     ]
-    
+
     for parent_path in possible_paths:
         credentials_path = parent_path / "execution" / "scripts" / "credentials.py"
         if credentials_path.exists():
             sys.path.insert(0, str(parent_path))
             try:
                 from execution.scripts.credentials import get_credential
+
                 CREDENTIALS_AVAILABLE = True
                 break
             except ImportError:
@@ -56,7 +58,10 @@ except ImportError:
 def _wait_run(client: Any, run_id: str, sleep_fn: Any) -> None:
     """Poll run until terminal status."""
     while client.run(run_id).get()["status"] not in [
-        "SUCCEEDED", "FAILED", "ABORTED", "TIMED-OUT",
+        "SUCCEEDED",
+        "FAILED",
+        "ABORTED",
+        "TIMED-OUT",
     ]:
         sleep_fn(2)
 
@@ -108,9 +113,7 @@ def _is_actual_article_content(body: str) -> bool:
 
 def _article_item_usable(item: dict[str, Any]) -> bool:
     """True if Apify item has usable article body (tweet-like or website-content-crawler)."""
-    body = (
-        item.get("fullText") or item.get("text") or ""
-    ) or (
+    body = (item.get("fullText") or item.get("text") or "") or (
         item.get("markdown") or item.get("content") or ""
     )
     if not body or len(body.strip()) < 50:
@@ -124,15 +127,15 @@ def get_apify_token_from_1password() -> str | None:
     """Get Apify API token from 1Password."""
     if not CREDENTIALS_AVAILABLE:
         return None
-    
+
     try:
         from execution.scripts.credentials import get_credential
-        
+
         # Try to get API token from 1Password item "Apify"
         token = get_credential("Apify", vault="Private", field="API token")
         if token:
             return token
-        
+
         # Try other field name variations
         for field_name in ["api_token", "token", "API key", "apify_token"]:
             try:
@@ -141,7 +144,7 @@ def get_apify_token_from_1password() -> str | None:
                     return token
             except (ValueError, KeyError):
                 continue
-        
+
         return None
     except Exception as e:
         print(f"Warning: Could not get Apify token from 1Password: {e}")
@@ -163,7 +166,7 @@ def extract_tweet_id(url: str) -> str:
 def extract_username(url: str) -> str | None:
     """Extract username from X/Twitter URL."""
     # Remove trailing slash for consistent matching
-    url = url.rstrip('/')
+    url = url.rstrip("/")
     # Match username after domain, before any additional path
     match = re.search(r"(?:twitter|x)\.com/(\w+)(?:/|$)", url)
     return match.group(1) if match else None
@@ -171,30 +174,24 @@ def extract_username(url: str) -> str | None:
 
 def is_profile_url(url: str) -> bool:
     """Check if URL is a profile URL (not a tweet)."""
-    return (
-        ("twitter.com/" in url or "x.com/" in url)
-        and "/status/" not in url
-    )
+    return ("twitter.com/" in url or "x.com/" in url) and "/status/" not in url
 
 
 class TwitterScraper(ScraperBase):
     """Scraper for X/Twitter posts using Apify."""
-    
+
     @property
     def source_name(self) -> str:
         return "twitter"
-    
+
     @property
     def supported_methods(self) -> list[str]:
         return ["apify"]  # Apify is the primary method for Twitter
-    
+
     def can_handle(self, url: str) -> bool:
         """Check if URL is a Twitter/X URL."""
-        return (
-            "twitter.com/" in url
-            or "x.com/" in url
-        )
-    
+        return "twitter.com/" in url or "x.com/" in url
+
     def extract_id(self, url: str) -> str:
         """Extract tweet ID or username from Twitter URL."""
         if is_profile_url(url):
@@ -209,7 +206,7 @@ class TwitterScraper(ScraperBase):
                 return extract_tweet_id(url)
             except ValueError as e:
                 raise ValueError(f"Invalid Twitter URL: {e}")
-    
+
     def scrape(
         self,
         url: str,
@@ -226,34 +223,39 @@ class TwitterScraper(ScraperBase):
             raise ImportError(
                 "apify-client not installed. Install with: pip install apify-client"
             )
-        
+
         if credentials is None:
             credentials = {}
-        
+
         # Get Apify token
         apify_token = credentials.get("apify_token")
         if not apify_token:
             apify_token = os.getenv("APIFY_API_TOKEN")
-        
+
         if not apify_token:
             apify_token = get_apify_token_from_1password()
-        
+
         if not apify_token:
             raise ValueError(
                 "APIFY_API_TOKEN required. Set env var, pass in credentials, "
                 "or configure in 1Password item 'Apify' with field 'API token'"
             )
-        
+
         # Use Apify's apidojo/tweet-scraper for both single tweets and profiles (try free actor first for profiles)
         client = ApifyClient(apify_token)
-        
+
         print(f"Running Apify Twitter scraper for: {url}")
-        
+
         # Check if it's a single tweet or user profile
         if is_profile_url(url):
             # User profile - scrape tweets (try free actor first, fallback to paid with optional max_tweets)
-            tweet_limit = max_tweets if max_tweets is not None else 0  # 0 = all available
-            print(f"Scraping tweets from profile: {url}" + (f" (max {tweet_limit})" if tweet_limit else ""))
+            tweet_limit = (
+                max_tweets if max_tweets is not None else 0
+            )  # 0 = all available
+            print(
+                f"Scraping tweets from profile: {url}"
+                + (f" (max {tweet_limit})" if tweet_limit else "")
+            )
             try:
                 run = client.actor("coder_luffy/free-tweet-scraper").call(
                     run_input={"urls": [url]},
@@ -283,10 +285,10 @@ class TwitterScraper(ScraperBase):
                 "Use: https://twitter.com/username (profile) or "
                 "https://twitter.com/username/status/TWEET_ID (single tweet)"
             )
-        
+
         # Wait for run to finish
         from time import sleep
-        
+
         while client.run(run["id"]).get()["status"] not in [
             "SUCCEEDED",
             "FAILED",
@@ -294,17 +296,17 @@ class TwitterScraper(ScraperBase):
             "TIMED-OUT",
         ]:
             sleep(2)
-        
+
         run_info = client.run(run["id"]).get()
         if run_info["status"] != "SUCCEEDED":
             raise ValueError(f"Apify run failed with status: {run_info['status']}")
-        
+
         # Fetch results
         items = list(client.dataset(run["defaultDatasetId"]).iterate_items())
-        
+
         if not items:
             raise ValueError("No tweet data extracted by Apify")
-        
+
         # Return all items for profile URLs, single item for tweet URLs
         if is_profile_url(url):
             return {"tweets": items, "is_profile": True, "url": url}
@@ -345,7 +347,13 @@ class TwitterScraper(ScraperBase):
                             continue
                         ref_items = _get_run_items(client, run_ref)
                         if ref_items and _article_item_usable(ref_items[0]):
-                            x_refs.append({"url": ref_url, "data": ref_items[0], "actor": actor_id})
+                            x_refs.append(
+                                {
+                                    "url": ref_url,
+                                    "data": ref_items[0],
+                                    "actor": actor_id,
+                                }
+                            )
                             got = True
                             break
                     except Exception as e:
@@ -353,11 +361,16 @@ class TwitterScraper(ScraperBase):
                         sys.stderr.write(f"[article] {actor_id} failed: {e}\n")
                         continue
                 if not got:
-                    x_refs.append({"url": ref_url, "error": "No article actor returned usable content"})
+                    x_refs.append(
+                        {
+                            "url": ref_url,
+                            "error": "No article actor returned usable content",
+                        }
+                    )
                 continue
         single["_referenced_apify"] = x_refs
         return single
-    
+
     def normalize_output(
         self,
         scraped_data: dict[str, Any],
@@ -365,12 +378,12 @@ class TwitterScraper(ScraperBase):
     ) -> dict[str, Any] | list[dict[str, Any]]:
         """Normalize Twitter data to common format."""
         current_time = int(time.time())
-        
+
         # Check if this is profile scraping (multiple tweets)
         if scraped_data.get("is_profile"):
             tweets = scraped_data.get("tweets", [])
             normalized_tweets = []
-            
+
             for tweet in tweets:
                 # Extract tweet ID from tweet data or URL
                 tweet_id = tweet.get("id", "")
@@ -382,15 +395,17 @@ class TwitterScraper(ScraperBase):
                             tweet_id = extract_tweet_id(tweet_url)
                         except ValueError:
                             tweet_id = f"unknown_{len(normalized_tweets)}"
-                
-                normalized_tweet = self._normalize_single_tweet(tweet, tweet_id, current_time)
+
+                normalized_tweet = self._normalize_single_tweet(
+                    tweet, tweet_id, current_time
+                )
                 normalized_tweets.append(normalized_tweet)
-            
+
             return normalized_tweets
         else:
             # Single tweet
             return self._normalize_single_tweet(scraped_data, source_id, current_time)
-    
+
     @staticmethod
     def _is_x_or_twitter_url(url: str) -> bool:
         """True if URL is X/Twitter (tweet or article)."""
@@ -414,10 +429,21 @@ class TwitterScraper(ScraperBase):
     ARTICLE_ACTORS: list[tuple[str, dict[str, Any]]] = [
         ("apidojo/twitter-scraper-lite", {"startUrls": ["__URL__"], "maxItems": 1}),
         ("pratikdani/twitter-posts-scraper", {"startUrls": ["__URL__"]}),
-        ("web.harvester/twitter-scraper", {"startUrls": ["__URL__"], "tweetsDesired": 1}),
+        (
+            "web.harvester/twitter-scraper",
+            {"startUrls": ["__URL__"], "tweetsDesired": 1},
+        ),
         ("scrapier/twitter-x-scraper", {"startUrls": ["__URL__"], "maxTweets": 1}),
         ("xtdata/twitter-x-scraper", {"startUrls": ["__URL__"], "maxItems": 1}),
-        ("apify/website-content-crawler", {"startUrls": [{"url": "__URL__"}], "maxCrawlDepth": 0, "maxCrawlPages": 1, "proxyConfiguration": {"useApifyProxy": True}}),
+        (
+            "apify/website-content-crawler",
+            {
+                "startUrls": [{"url": "__URL__"}],
+                "maxCrawlDepth": 0,
+                "maxCrawlPages": 1,
+                "proxyConfiguration": {"useApifyProxy": True},
+            },
+        ),
     ]
 
     def _extract_outbound_urls(
@@ -475,7 +501,9 @@ class TwitterScraper(ScraperBase):
         text = tweet_data.get("text", "")
         author = tweet_data.get("author", {})
         author_obj = author if isinstance(author, dict) else {}
-        username = author_obj.get("userName", author_obj.get("username", "")) or str(author)
+        username = author_obj.get("userName", author_obj.get("username", "")) or str(
+            author
+        )
         created_at = tweet_data.get("createdAt", scraped_at)
         likes = tweet_data.get("likeCount", 0)
         retweets = tweet_data.get("retweetCount", 0)
@@ -527,18 +555,38 @@ class TwitterScraper(ScraperBase):
                         # Tweet-like (Apify Twitter actors)
                         body = d.get("fullText") or d.get("text") or ""
                         author = d.get("author") or {}
-                        title = author.get("name", "") if isinstance(author, dict) else ""
+                        title = (
+                            author.get("name", "") if isinstance(author, dict) else ""
+                        )
                         # Website-content-crawler (or similar) output
                         if not body:
-                            body = d.get("markdown") or d.get("content") or d.get("text") or ""
+                            body = (
+                                d.get("markdown")
+                                or d.get("content")
+                                or d.get("text")
+                                or ""
+                            )
                         if not title:
-                            title = d.get("title") or d.get("metadata", {}).get("title", "") if isinstance(d.get("metadata"), dict) else ""
+                            title = (
+                                d.get("title") or d.get("metadata", {}).get("title", "")
+                                if isinstance(d.get("metadata"), dict)
+                                else ""
+                            )
                         if _is_actual_article_content(body or ""):
                             referenced_content.append(
-                                {"url": ref_url, "title": title or "", "body": body or ""}
+                                {
+                                    "url": ref_url,
+                                    "title": title or "",
+                                    "body": body or "",
+                                }
                             )
                         else:
-                            referenced_content.append({"url": ref_url, "error": "Only cookie/consent or error page retrieved"})
+                            referenced_content.append(
+                                {
+                                    "url": ref_url,
+                                    "error": "Only cookie/consent or error page retrieved",
+                                }
+                            )
                     else:
                         # Apify failed (e.g. actor doesn't support /i/article/); fall back to URL fetch
                         try:
@@ -547,12 +595,23 @@ class TwitterScraper(ScraperBase):
                                 body = ref.get("body", "")
                                 if _is_actual_article_content(body or ""):
                                     referenced_content.append(
-                                        {"url": ref_url, "title": ref.get("title", ""), "body": body}
+                                        {
+                                            "url": ref_url,
+                                            "title": ref.get("title", ""),
+                                            "body": body,
+                                        }
                                     )
                                 else:
-                                    referenced_content.append({"url": ref_url, "error": "Only cookie/consent or error page retrieved"})
+                                    referenced_content.append(
+                                        {
+                                            "url": ref_url,
+                                            "error": "Only cookie/consent or error page retrieved",
+                                        }
+                                    )
                             else:
-                                referenced_content.append({"url": ref_url, "error": ref["error"]})
+                                referenced_content.append(
+                                    {"url": ref_url, "error": ref["error"]}
+                                )
                         except Exception as e:
                             referenced_content.append({"url": ref_url, "error": str(e)})
                     continue
@@ -561,10 +620,16 @@ class TwitterScraper(ScraperBase):
                     ref = fetch_url_body(ref_url)
                     if "error" not in ref:
                         referenced_content.append(
-                            {"url": ref_url, "title": ref.get("title", ""), "body": ref.get("body", "")}
+                            {
+                                "url": ref_url,
+                                "title": ref.get("title", ""),
+                                "body": ref.get("body", ""),
+                            }
                         )
                     else:
-                        referenced_content.append({"url": ref_url, "error": ref["error"]})
+                        referenced_content.append(
+                            {"url": ref_url, "error": ref["error"]}
+                        )
                 except Exception as e:
                     referenced_content.append({"url": ref_url, "error": str(e)})
             out["referenced_content"] = referenced_content

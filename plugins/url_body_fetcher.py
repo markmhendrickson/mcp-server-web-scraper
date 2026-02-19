@@ -18,18 +18,21 @@ PLAYWRIGHT_AVAILABLE = False
 
 try:
     import requests
+
     REQUESTS_AVAILABLE = True
 except ImportError:
     pass
 
 try:
     from bs4 import BeautifulSoup
+
     BEAUTIFULSOUP_AVAILABLE = True
 except ImportError:
     pass
 
 try:
     from playwright.sync_api import sync_playwright
+
     PLAYWRIGHT_AVAILABLE = True
 except ImportError:
     pass
@@ -137,7 +140,9 @@ def fetch_url_body(
     try:
         # x.com/twitter.com need more time and networkidle so JS-rendered content (e.g. articles) loads
         is_x = "x.com" in url or "twitter.com" in url
-        wait_ms = min(45000, timeout_playwright_ms * 2) if is_x else timeout_playwright_ms
+        wait_ms = (
+            min(45000, timeout_playwright_ms * 2) if is_x else timeout_playwright_ms
+        )
         with sync_playwright() as p:
             browser = p.chromium.launch(headless=True)
             page = browser.new_page()

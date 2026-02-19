@@ -1,6 +1,7 @@
 """
 Pytest configuration for web-scraper MCP server tests.
 """
+
 import sys
 from pathlib import Path
 
@@ -36,5 +37,5 @@ def mock_scraped_content():
         "id": "abc123",
         "title": "Test Conversation",
         "content": "Test content",
-        "timestamp": "2025-01-23T12:00:00Z"
+        "timestamp": "2025-01-23T12:00:00Z",
     }

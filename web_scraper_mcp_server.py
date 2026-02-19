@@ -116,32 +116,33 @@ def load_credentials_from_env() -> dict[str, str | None]:
 def get_data_dir() -> Path:
     """Get data directory for storing scraped content."""
     credentials = load_credentials_from_env()
-    
+
     # Try DATA_DIR from credentials
     if credentials.get("data_dir"):
         data_dir = Path(credentials["data_dir"])
         data_dir.mkdir(parents=True, exist_ok=True)
         return data_dir
-    
+
     # Try to import config module from parent repo
     try:
         server_dir = Path(__file__).parent
         possible_paths = [
             server_dir.parent.parent,  # mcp/web-scraper -> mcp -> personal
         ]
-        
+
         for parent_path in possible_paths:
             config_path = parent_path / "config.py"
             if config_path.exists():
                 sys.path.insert(0, str(parent_path))
                 try:
                     from config import get_data_dir as _get_data_dir
+
                     return _get_data_dir()
                 except ImportError:
                     continue
     except Exception:
         pass
-    
+
     # Fallback to config directory
     scraped_dir = CONFIG_DIR / "scraped"
     scraped_dir.mkdir(parents=True, exist_ok=True)
@@ -152,13 +153,15 @@ def get_data_dir() -> Path:
 async def list_tools() -> list[Tool]:
     """List available tools."""
     sources = registry.list_sources()
-    
+    # Ensure non-empty for schema enum (get_scraped_content); client may reject empty enum
+    source_list = sources if sources else ["chatgpt", "twitter"]
+
     return [
         Tool(
             name="scrape_content",
             description=(
                 f"Scrape content from supported sources. "
-                f"Currently supports: {', '.join(sources)}. "
+                f"Currently supports: {', '.join(source_list)}. "
                 f"Automatically detects source from URL. "
                 f"Supports multiple methods: Playwright, Apify, requests."
             ),
@@ -175,7 +178,7 @@ async def list_tools() -> list[Tool]:
                             "- Spotify (playlist): https://open.spotify.com/playlist/PLAYLIST_ID\n"
                             "- NYT Podcast (episode): https://www.nytimes.com/YYYY/MM/DD/podcasts/episode-slug.html\n"
                             "- Metacast (podcast episode): https://metacast.app/podcast/show-id/episode-slug/episode-id"
-                        )
+                        ),
                     },
                     "method": {
                         "type": "string",
@@ -184,14 +187,14 @@ async def list_tools() -> list[Tool]:
                             "Scraping method to use. 'auto' tries methods in order until one succeeds. "
                             "Default: auto"
                         ),
-                        "default": "auto"
+                        "default": "auto",
                     },
                     "output_path": {
                         "type": "string",
                         "description": (
                             "Optional: Custom output file path. "
                             "If not provided, saves to $DATA_DIR/imports/{source}/{id}.json"
-                        )
+                        ),
                     },
                     "max_tweets": {
                         "type": "integer",
@@ -200,11 +203,11 @@ async def list_tools() -> list[Tool]:
                             "Uses Apify paid actor. Ignored for single tweets."
                         ),
                         "minimum": 1,
-                        "maximum": 500
-                    }
+                        "maximum": 500,
+                    },
                 },
-                "required": ["url"]
-            }
+                "required": ["url"],
+            },
         ),
         Tool(
             name="list_scraped_content",
@@ -214,22 +217,22 @@ async def list_tools() -> list[Tool]:
                 "properties": {
                     "source": {
                         "type": "string",
-                        "description": f"Filter by source. Options: {', '.join(sources)} or 'all' for all sources. Default: all",
-                        "default": "all"
+                        "description": f"Filter by source. Options: {', '.join(source_list)} or 'all' for all sources. Default: all",
+                        "default": "all",
                     },
                     "limit": {
                         "type": "integer",
                         "description": "Maximum number of items to return. Default: 50",
-                        "default": 50
+                        "default": 50,
                     },
                     "sort_by": {
                         "type": "string",
                         "enum": ["date", "source"],
                         "description": "Sort order. Default: date",
-                        "default": "date"
-                    }
-                }
-            }
+                        "default": "date",
+                    },
+                },
+            },
         ),
         Tool(
             name="get_scraped_content",
@@ -239,25 +242,22 @@ async def list_tools() -> list[Tool]:
                 "properties": {
                     "source": {
                         "type": "string",
-                        "enum": sources,
-                        "description": f"Source type. Options: {', '.join(sources)}"
+                        "enum": source_list,
+                        "description": f"Source type. Options: {', '.join(source_list)}",
                     },
                     "content_id": {
                         "type": "string",
-                        "description": "Content ID (e.g., share ID for ChatGPT, tweet ID for Twitter, playlist ID for Spotify)"
-                    }
+                        "description": "Content ID (e.g., share ID for ChatGPT, tweet ID for Twitter, playlist ID for Spotify)",
+                    },
                 },
-                "required": ["source", "content_id"]
-            }
+                "required": ["source", "content_id"],
+            },
         ),
         Tool(
             name="list_supported_sources",
             description="List all supported scraping sources",
-            inputSchema={
-                "type": "object",
-                "properties": {}
-            }
-        )
+            inputSchema={"type": "object", "properties": {}},
+        ),
     ]
 
 
@@ -272,7 +272,7 @@ async def call_tool(name: str, arguments: Any) -> list[TextContent]:
         return await handle_get_content(arguments)
     elif name == "list_supported_sources":
         return await handle_list_sources(arguments)
-    
+
     raise ValueError(f"Unknown tool: {name}")
 
 
@@ -283,52 +283,62 @@ async def handle_scrape_content(args: dict) -> list[TextContent]:
         method = args.get("method", "auto")
         output_path = args.get("output_path")
         max_tweets = args.get("max_tweets")
-        
+
         if not url:
-            return [TextContent(
-                type="text",
-                text=json.dumps({"error": "URL is required"}, indent=2)
-            )]
-        
+            return [
+                TextContent(
+                    type="text", text=json.dumps({"error": "URL is required"}, indent=2)
+                )
+            ]
+
         # Find appropriate scraper
         scraper = registry.get_scraper(url)
         if not scraper:
-            return [TextContent(
-                type="text",
-                text=json.dumps({
-                    "error": f"Unsupported URL. Supported sources: {', '.join(registry.list_sources())}",
-                    "url": url
-                }, indent=2)
-            )]
-        
+            return [
+                TextContent(
+                    type="text",
+                    text=json.dumps(
+                        {
+                            "error": f"Unsupported URL. Supported sources: {', '.join(registry.list_sources())}",
+                            "url": url,
+                        },
+                        indent=2,
+                    ),
+                )
+            ]
+
         # Extract source ID
         try:
             source_id = scraper.extract_id(url)
         except ValueError as e:
-            return [TextContent(
-                type="text",
-                text=json.dumps({"error": str(e)}, indent=2)
-            )]
-        
+            return [
+                TextContent(type="text", text=json.dumps({"error": str(e)}, indent=2))
+            ]
+
         # Determine output path
         if output_path:
             output_file = Path(output_path)
         else:
             data_dir = get_data_dir()
             output_file = scraper.get_storage_path(source_id, data_dir)
-        
+
         # Get credentials
         credentials = load_credentials_from_env()
-        
+
         # Scrape content
         try:
             # Run sync scrape in a thread to avoid asyncio conflicts with Playwright
             # Create a new event loop in the thread to avoid conflicts
             import concurrent.futures
-            scrape_options = {"max_tweets": max_tweets} if max_tweets is not None else {}
+
+            scrape_options = (
+                {"max_tweets": max_tweets} if max_tweets is not None else {}
+            )
+
             def _run_scrape():
                 # Create a new event loop in this thread (no existing loop)
                 import asyncio
+
                 try:
                     # Try to get running loop - if it exists, we're in async context
                     loop = asyncio.get_running_loop()
@@ -337,41 +347,47 @@ async def handle_scrape_content(args: dict) -> list[TextContent]:
                 except RuntimeError:
                     # No event loop - safe to use sync Playwright
                     return scraper.scrape(url, method, credentials, **scrape_options)
-            
+
             loop = asyncio.get_running_loop()
             with concurrent.futures.ThreadPoolExecutor() as executor:
                 scraped_data = await loop.run_in_executor(executor, _run_scrape)
         except Exception as e:
-            return [TextContent(
-                type="text",
-                text=json.dumps({
-                    "error": f"Scraping failed: {str(e)}",
-                    "source": scraper.source_name
-                }, indent=2)
-            )]
-        
+            return [
+                TextContent(
+                    type="text",
+                    text=json.dumps(
+                        {
+                            "error": f"Scraping failed: {str(e)}",
+                            "source": scraper.source_name,
+                        },
+                        indent=2,
+                    ),
+                )
+            ]
+
         # Normalize output
         normalized_data = scraper.normalize_output(scraped_data, source_id)
-        
+
         # Check if this is multiple tweets (profile scraping) or single content
         if isinstance(normalized_data, list):
             # Multiple tweets from profile scraping
             data_dir = get_data_dir()
             output_paths = []
-            
+
             for tweet_data in normalized_data:
                 tweet_id = tweet_data.get("tweet_id", "unknown")
                 tweet_output_file = scraper.get_storage_path(tweet_id, data_dir)
                 tweet_output_file.parent.mkdir(parents=True, exist_ok=True)
-                
+
                 with open(tweet_output_file, "w", encoding="utf-8") as f:
                     json.dump(tweet_data, f, indent=2, ensure_ascii=False)
-                
+
                 output_paths.append(str(tweet_output_file))
-            
+
             # Also save combined file for import_tweets_as_posts (twitter_{username}_tweets.json)
             if normalized_data and scraper.source_name == "twitter":
                 from datetime import datetime
+
                 username = source_id  # For profile URLs, source_id is the username
                 tmp_dir = data_dir / "tmp"
                 tmp_dir.mkdir(parents=True, exist_ok=True)
@@ -380,29 +396,35 @@ async def handle_scrape_content(args: dict) -> list[TextContent]:
                 for t in normalized_data:
                     created = t.get("created_at")
                     if isinstance(created, (int, float)):
-                        ts = datetime.utcfromtimestamp(created).strftime("%Y-%m-%dT%H:%M:%S.000Z")
+                        ts = datetime.utcfromtimestamp(created).strftime(
+                            "%Y-%m-%dT%H:%M:%S.000Z"
+                        )
                     else:
                         ts = str(created) if created else ""
-                    import_tweets.append({
-                        "tweet_id": t.get("tweet_id", ""),
-                        "username": t.get("username", username),
-                        "text": t.get("text", ""),
-                        "url": t.get("url", ""),
-                        "timestamp": ts,
-                        "replies": t.get("replies", 0),
-                        "retweets": t.get("retweets", 0),
-                        "likes": t.get("likes", 0),
-                        "quote_count": t.get("quote_count", 0),
-                        "bookmark_count": t.get("bookmark_count", 0),
-                        "is_reply": t.get("is_reply", False),
-                        "is_retweet": t.get("is_retweet", False),
-                        "is_quote": t.get("is_quote", False),
-                        "lang": t.get("lang", ""),
-                        "images": t.get("images", []),
-                        "author_name": t.get("author_name", ""),
-                        "author_profile_picture": t.get("author_profile_picture", ""),
-                        "scraped_at": datetime.utcnow().isoformat() + "Z",
-                    })
+                    import_tweets.append(
+                        {
+                            "tweet_id": t.get("tweet_id", ""),
+                            "username": t.get("username", username),
+                            "text": t.get("text", ""),
+                            "url": t.get("url", ""),
+                            "timestamp": ts,
+                            "replies": t.get("replies", 0),
+                            "retweets": t.get("retweets", 0),
+                            "likes": t.get("likes", 0),
+                            "quote_count": t.get("quote_count", 0),
+                            "bookmark_count": t.get("bookmark_count", 0),
+                            "is_reply": t.get("is_reply", False),
+                            "is_retweet": t.get("is_retweet", False),
+                            "is_quote": t.get("is_quote", False),
+                            "lang": t.get("lang", ""),
+                            "images": t.get("images", []),
+                            "author_name": t.get("author_name", ""),
+                            "author_profile_picture": t.get(
+                                "author_profile_picture", ""
+                            ),
+                            "scraped_at": datetime.utcnow().isoformat() + "Z",
+                        }
+                    )
                 combined_payload = {
                     "username": username,
                     "scraped_at": datetime.utcnow().isoformat() + "Z",
@@ -412,7 +434,7 @@ async def handle_scrape_content(args: dict) -> list[TextContent]:
                 with open(combined_path, "w", encoding="utf-8") as f:
                     json.dump(combined_payload, f, indent=2, ensure_ascii=False)
                 output_paths.append(str(combined_path))
-            
+
             # Return result for multiple tweets
             result = {
                 "success": True,
@@ -420,17 +442,25 @@ async def handle_scrape_content(args: dict) -> list[TextContent]:
                 "account": source_id,
                 "tweets_scraped": len(normalized_data),
                 "output_paths": output_paths,
-                "method_used": method if method != "auto" else "auto (method determined by scraper)",
+                "method_used": (
+                    method
+                    if method != "auto"
+                    else "auto (method determined by scraper)"
+                ),
             }
             if normalized_data and scraper.source_name == "twitter":
                 result["import_file"] = str(combined_path)
-            
+
             # Add preview of first few tweets
             if normalized_data:
                 result["sample_tweets"] = [
                     {
                         "tweet_id": tweet.get("tweet_id"),
-                        "text_preview": tweet.get("text", "")[:100] + "..." if len(tweet.get("text", "")) > 100 else tweet.get("text", "")
+                        "text_preview": (
+                            tweet.get("text", "")[:100] + "..."
+                            if len(tweet.get("text", "")) > 100
+                            else tweet.get("text", "")
+                        ),
                     }
                     for tweet in normalized_data[:3]  # Show first 3 tweets
                 ]
@@ -440,31 +470,41 @@ async def handle_scrape_content(args: dict) -> list[TextContent]:
             output_file.parent.mkdir(parents=True, exist_ok=True)
             with open(output_file, "w", encoding="utf-8") as f:
                 json.dump(normalized_data, f, indent=2, ensure_ascii=False)
-            
+
             # Return result
             result = {
                 "success": True,
                 "source": scraper.source_name,
                 "content_id": source_id,
                 "output_path": str(output_file),
-                "method_used": method if method != "auto" else "auto (method determined by scraper)",
+                "method_used": (
+                    method
+                    if method != "auto"
+                    else "auto (method determined by scraper)"
+                ),
             }
-            
+
             # Add source-specific metadata
             if scraper.source_name == "chatgpt":
                 result["message_count"] = len(normalized_data.get("mapping", {}))
                 result["title"] = normalized_data.get("title", "ChatGPT Conversation")
             elif scraper.source_name == "twitter":
                 result["username"] = normalized_data.get("username", "")
-                result["text_preview"] = normalized_data.get("text", "")[:100] + "..." if len(normalized_data.get("text", "")) > 100 else normalized_data.get("text", "")
-        
+                result["text_preview"] = (
+                    normalized_data.get("text", "")[:100] + "..."
+                    if len(normalized_data.get("text", "")) > 100
+                    else normalized_data.get("text", "")
+                )
+
         return [TextContent(type="text", text=json.dumps(result, indent=2))]
-    
+
     except Exception as e:
-        return [TextContent(
-            type="text",
-            text=json.dumps({"error": f"Unexpected error: {str(e)}"}, indent=2)
-        )]
+        return [
+            TextContent(
+                type="text",
+                text=json.dumps({"error": f"Unexpected error: {str(e)}"}, indent=2),
+            )
+        ]
 
 
 async def handle_list_content(args: dict) -> list[TextContent]:
@@ -473,25 +513,25 @@ async def handle_list_content(args: dict) -> list[TextContent]:
         source_filter = args.get("source", "all")
         limit = args.get("limit", 50)
         sort_by = args.get("sort_by", "date")
-        
+
         data_dir = get_data_dir()
-        
+
         # Find all scraped content
         all_content = []
-        
+
         for source_name in registry.list_sources():
             if source_filter != "all" and source_filter != source_name:
                 continue
-            
+
             scraper = registry.get_scraper_by_name(source_name)
             if not scraper:
                 continue
-            
+
             # Look for content in source-specific directory
             source_dir = data_dir / "imports" / source_name
             if not source_dir.exists():
                 continue
-            
+
             # Find JSON files
             if source_name == "chatgpt":
                 pattern = "share_*.json"
@@ -505,51 +545,61 @@ async def handle_list_content(args: dict) -> list[TextContent]:
                 pattern = "episode_*.json"
             else:
                 pattern = "*.json"
-            
+
             for file_path in source_dir.glob(pattern):
                 try:
                     with open(file_path, "r", encoding="utf-8") as f:
                         data = json.load(f)
-                    
+
                     content_id = (
-                        data.get("share_id") 
-                        or data.get("tweet_id") 
+                        data.get("share_id")
+                        or data.get("tweet_id")
                         or data.get("playlist_id")
                         or data.get("episode_id")
                         or file_path.stem.replace("episode_", "")
                     )
-                    
-                    all_content.append({
-                        "source": source_name,
-                        "content_id": content_id,
-                        "file_path": str(file_path),
-                        "scraped_at": data.get("scraped_at") or data.get("update_time", 0),
-                    })
+
+                    all_content.append(
+                        {
+                            "source": source_name,
+                            "content_id": content_id,
+                            "file_path": str(file_path),
+                            "scraped_at": data.get("scraped_at")
+                            or data.get("update_time", 0),
+                        }
+                    )
                 except Exception:
                     continue
-        
+
         # Sort
         if sort_by == "date":
             all_content.sort(key=lambda x: x.get("scraped_at", 0), reverse=True)
         elif sort_by == "source":
-            all_content.sort(key=lambda x: (x.get("source", ""), x.get("scraped_at", 0)), reverse=True)
-        
+            all_content.sort(
+                key=lambda x: (x.get("source", ""), x.get("scraped_at", 0)),
+                reverse=True,
+            )
+
         # Apply limit
         limited_content = all_content[:limit]
-        
+
         result = {
             "content": limited_content,
             "total": len(all_content),
-            "shown": len(limited_content)
+            "shown": len(limited_content),
         }
-        
+
         return [TextContent(type="text", text=json.dumps(result, indent=2))]
-    
+
     except Exception as e:
-        return [TextContent(
-            type="text",
-            text=json.dumps({"error": f"Error listing content: {str(e)}"}, indent=2)
-        )]
+        return [
+            TextContent(
+                type="text",
+                text=json.dumps(
+                    {"error": f"Error listing content: {str(e)}"}, indent=2
+                ),
+            )
+        ]
 
 
 async def handle_get_content(args: dict) -> list[TextContent]:
@@ -557,75 +607,92 @@ async def handle_get_content(args: dict) -> list[TextContent]:
     try:
         source = args.get("source")
         content_id = args.get("content_id")
-        
+
         if not source or not content_id:
-            return [TextContent(
-                type="text",
-                text=json.dumps({"error": "source and content_id are required"}, indent=2)
-            )]
-        
+            return [
+                TextContent(
+                    type="text",
+                    text=json.dumps(
+                        {"error": "source and content_id are required"}, indent=2
+                    ),
+                )
+            ]
+
         scraper = registry.get_scraper_by_name(source)
         if not scraper:
-            return [TextContent(
-                type="text",
-                text=json.dumps({
-                    "error": f"Unknown source: {source}",
-                    "supported_sources": registry.list_sources()
-                }, indent=2)
-            )]
-        
+            return [
+                TextContent(
+                    type="text",
+                    text=json.dumps(
+                        {
+                            "error": f"Unknown source: {source}",
+                            "supported_sources": registry.list_sources(),
+                        },
+                        indent=2,
+                    ),
+                )
+            ]
+
         data_dir = get_data_dir()
         file_path = scraper.get_storage_path(content_id, data_dir)
-        
+
         if not file_path.exists():
-            return [TextContent(
-                type="text",
-                text=json.dumps({
-                    "error": f"Content not found: {content_id}",
-                    "source": source,
-                    "file_path": str(file_path)
-                }, indent=2)
-            )]
-        
+            return [
+                TextContent(
+                    type="text",
+                    text=json.dumps(
+                        {
+                            "error": f"Content not found: {content_id}",
+                            "source": source,
+                            "file_path": str(file_path),
+                        },
+                        indent=2,
+                    ),
+                )
+            ]
+
         # Load content
         with open(file_path, "r", encoding="utf-8") as f:
             data = json.load(f)
-        
+
         result = {
             "source": source,
             "content_id": content_id,
             "file_path": str(file_path),
-            "data": data
+            "data": data,
         }
-        
+
         return [TextContent(type="text", text=json.dumps(result, indent=2))]
-    
+
     except Exception as e:
-        return [TextContent(
-            type="text",
-            text=json.dumps({"error": f"Error getting content: {str(e)}"}, indent=2)
-        )]
+        return [
+            TextContent(
+                type="text",
+                text=json.dumps(
+                    {"error": f"Error getting content: {str(e)}"}, indent=2
+                ),
+            )
+        ]
 
 
 async def handle_list_sources(args: dict) -> list[TextContent]:
     """Handle list_supported_sources tool call."""
     sources = registry.list_sources()
-    
+
     source_info = []
     for source_name in sources:
         scraper = registry.get_scraper_by_name(source_name)
         if scraper:
-            source_info.append({
-                "name": source_name,
-                "supported_methods": scraper.supported_methods,
-                "description": f"Scraper for {source_name}"
-            })
-    
-    result = {
-        "sources": source_info,
-        "total": len(source_info)
-    }
-    
+            source_info.append(
+                {
+                    "name": source_name,
+                    "supported_methods": scraper.supported_methods,
+                    "description": f"Scraper for {source_name}",
+                }
+            )
+
+    result = {"sources": source_info, "total": len(source_info)}
+
     return [TextContent(type="text", text=json.dumps(result, indent=2))]
 
 
