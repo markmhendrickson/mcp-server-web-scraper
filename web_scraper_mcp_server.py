@@ -23,6 +23,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 # Import scraper registry and plugins
 from scraper_registry import ScraperRegistry
 from plugins.chatgpt_scraper import ChatGPTScraper
+from plugins.claude_scraper import ClaudeScraper
 from plugins.twitter_scraper import TwitterScraper
 from plugins.spotify_scraper import SpotifyScraper
 from plugins.nyt_podcast_scraper import NYTPodcastScraper
@@ -48,6 +49,11 @@ try:
     registry.register(ChatGPTScraper())
 except Exception as e:
     print(f"Warning: Could not register ChatGPT scraper: {e}", file=sys.stderr)
+
+try:
+    registry.register(ClaudeScraper())
+except Exception as e:
+    print(f"Warning: Could not register Claude scraper: {e}", file=sys.stderr)
 
 try:
     registry.register(TwitterScraper())
@@ -173,6 +179,7 @@ async def list_tools() -> list[Tool]:
                         "description": (
                             "URL to scrape. Supported formats:\n"
                             "- ChatGPT: https://chatgpt.com/share/abc-123 or https://chatgpt.com/c/abc-123\n"
+                            "- Claude: https://claude.ai/share/abc-123\n"
                             "- Twitter/X (single tweet): https://twitter.com/username/status/1234567890 or https://x.com/username/status/1234567890\n"
                             "- Twitter/X (account profile - scrapes all tweets): https://twitter.com/username or https://x.com/username\n"
                             "- Spotify (playlist): https://open.spotify.com/playlist/PLAYLIST_ID\n"
@@ -488,6 +495,9 @@ async def handle_scrape_content(args: dict) -> list[TextContent]:
             if scraper.source_name == "chatgpt":
                 result["message_count"] = len(normalized_data.get("mapping", {}))
                 result["title"] = normalized_data.get("title", "ChatGPT Conversation")
+            elif scraper.source_name == "claude":
+                result["message_count"] = len(normalized_data.get("messages", []))
+                result["title"] = normalized_data.get("title", "Claude shared conversation")
             elif scraper.source_name == "twitter":
                 result["username"] = normalized_data.get("username", "")
                 result["text_preview"] = (
@@ -534,6 +544,8 @@ async def handle_list_content(args: dict) -> list[TextContent]:
 
             # Find JSON files
             if source_name == "chatgpt":
+                pattern = "share_*.json"
+            elif source_name == "claude":
                 pattern = "share_*.json"
             elif source_name == "twitter":
                 pattern = "tweet_*.json"

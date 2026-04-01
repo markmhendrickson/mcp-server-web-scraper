@@ -18,6 +18,11 @@ class TestSourceDetection:
         url = "https://chatgpt.com/c/abc123"
         assert "chatgpt.com/c/" in url
 
+    def test_detect_claude_share_url(self):
+        """Test detecting Claude share URLs."""
+        url = "https://claude.ai/share/fbb3995e-f2db-4f4c-8473-6391f6b8f998"
+        assert "claude.ai/share/" in url
+
     def test_detect_twitter_status_url(self, sample_twitter_url):
         """Test detecting Twitter status URLs."""
         assert "twitter.com" in sample_twitter_url or "x.com" in sample_twitter_url
