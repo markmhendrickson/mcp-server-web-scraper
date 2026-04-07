@@ -605,17 +605,23 @@ def scrape_with_apify(share_url: str, api_token: str | None = None) -> dict[str,
 
     client = ApifyClient(api_token)
 
-    print(f"Running Apify actor for: {share_url}")
+    actor_id = os.getenv(
+        "APIFY_CHATGPT_ACTOR_ID",
+        "straightforward_understanding/chatgpt-conversation-scraper",
+    ).strip()
+    _timeout_raw = (os.getenv("APIFY_CHATGPT_TIMEOUT_SECS") or "300").strip()
+    try:
+        timeout_secs = int(_timeout_raw) if _timeout_raw else 300
+    except ValueError:
+        timeout_secs = 300
 
-    # Use the ChatGPT Conversation Scraper actor
-    # Actor ID: straightforward_understanding/chatgpt-conversation-scraper
-    run = client.actor(
-        "straightforward_understanding/chatgpt-conversation-scraper"
-    ).call(
+    print(f"Running Apify actor {actor_id} for: {share_url}")
+
+    run = client.actor(actor_id).call(
         run_input={
             "startUrls": [{"url": share_url}],
         },
-        timeout_secs=300,
+        timeout_secs=timeout_secs,
     )
 
     # Wait for run to finish
@@ -631,7 +637,19 @@ def scrape_with_apify(share_url: str, api_token: str | None = None) -> dict[str,
 
     run_info = client.run(run["id"]).get()
     if run_info["status"] != "SUCCEEDED":
-        raise ValueError(f"Apify run failed with status: {run_info['status']}")
+        rid = run_info.get("id") or run.get("id")
+        status_msg = (run_info.get("statusMessage") or "").strip()
+        meta = run_info.get("meta") or {}
+        origin = meta.get("origin") or "UNKNOWN"
+        parts = [
+            f"Apify run failed with status: {run_info['status']}",
+            f"actor={actor_id}",
+            f"origin={origin}",
+        ]
+        if status_msg:
+            parts.append(f"statusMessage={status_msg}")
+        parts.append(f"debug=https://console.apify.com/actors/runs/{rid}")
+        raise ValueError(". ".join(parts))
 
     # Fetch results
     items = list(client.dataset(run["defaultDatasetId"]).iterate_items())

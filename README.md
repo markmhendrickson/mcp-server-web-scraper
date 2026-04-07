@@ -352,6 +352,16 @@ Conversations are saved to:
 - Or configure in 1Password (item "Apify", field "API token")
 - Get token at https://console.apify.com/account/integrations
 
+**Problem:** `Apify run failed with status: FAILED` (or `TIMED-OUT`)
+
+**Solution:**
+- Open the `debug=https://console.apify.com/actors/runs/...` link from the error; read **statusMessage** on the run (billing, actor crash, blocked page, invalid input).
+- Pay-per-event actors need an Apify plan / credits; subscribe to the actor on its [store page](https://apify.com/straightforward_understanding/chatgpt-conversation-scraper) if prompted.
+- Optional env overrides:
+  - `APIFY_CHATGPT_ACTOR_ID` — default `straightforward_understanding/chatgpt-conversation-scraper` if you fork or switch actors.
+  - `APIFY_CHATGPT_TIMEOUT_SECS` — run timeout (default `300`).
+- With `method: "auto"`, ChatGPT URLs try **Apify first**, then **Playwright**, then **requests**. Use `"method": "playwright"` to skip Apify when it is misconfigured or flaky.
+
 ### No messages found
 
 **Problem:** Scraping succeeds but returns 0 messages

@@ -4,6 +4,7 @@ ChatGPT scraper plugin.
 Reuses logic from the original ChatGPT scraper.
 """
 
+import os
 import sys
 from pathlib import Path
 from typing import Any
@@ -66,25 +67,34 @@ class ChatGPTScraper(ScraperBase):
         if credentials is None:
             credentials = {}
 
-        # Get Apify token
         apify_token = credentials.get("apify_token")
+        if not apify_token:
+            apify_token = os.getenv("APIFY_API_TOKEN")
         if not apify_token:
             apify_token = get_apify_token_from_1password()
 
-        # ChatGPT always uses Apify (reliable extraction; share pages are JS-heavy)
-        methods_to_try = ["apify"]
+        order_by_method = {
+            "auto": ["apify", "playwright", "requests"],
+            "apify": ["apify"],
+            "playwright": ["playwright"],
+            "requests": ["requests"],
+        }
+        methods_to_try = order_by_method.get(
+            (method or "auto").lower(),
+            order_by_method["auto"],
+        )
 
         errors = []
         for scrape_method in methods_to_try:
             try:
                 if scrape_method == "playwright":
                     return scrape_with_playwright(url)
-                elif scrape_method == "apify":
+                if scrape_method == "apify":
                     if not apify_token:
                         errors.append("apify: APIFY_API_TOKEN required")
                         continue
                     return scrape_with_apify(url, apify_token)
-                elif scrape_method == "requests":
+                if scrape_method == "requests":
                     return scrape_with_requests(url)
             except Exception as e:
                 errors.append(f"{scrape_method}: {str(e)}")

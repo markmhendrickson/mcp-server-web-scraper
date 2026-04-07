@@ -95,6 +95,10 @@ Create `.env` in repo root or `~/.config/chatgpt-scraper/.env`:
 # Optional: Apify API token (for Apify scraping method)
 APIFY_API_TOKEN=your-token-here
 
+# Optional: override ChatGPT actor or timeout (defaults work for store actor)
+# APIFY_CHATGPT_ACTOR_ID=straightforward_understanding/chatgpt-conversation-scraper
+# APIFY_CHATGPT_TIMEOUT_SECS=300
+
 # Optional: Data directory
 DATA_DIR=/path/to/data
 ```

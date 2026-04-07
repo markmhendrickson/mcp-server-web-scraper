@@ -244,7 +244,8 @@ async def handle_scrape_conversation(args: dict) -> list[TextContent]:
 
         methods_to_try = []
         if method == "auto":
-            methods_to_try = ["playwright", "apify", "requests"]
+            # Match plugins/chatgpt_scraper.py: Apify first (structured), then Playwright, then requests
+            methods_to_try = ["apify", "playwright", "requests"]
         else:
             methods_to_try = [method]
 
