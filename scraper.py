@@ -194,13 +194,21 @@ def _extract_messages_from_mapping(data: dict[str, Any]) -> list[dict[str, Any]]
     return messages
 
 
-def scrape_with_playwright(share_url: str, timeout: int = 60000) -> dict[str, Any]:
+def scrape_with_playwright(
+    share_url: str,
+    timeout: int = 60000,
+    *,
+    headless: bool = True,
+    storage_state_path: str | Path | None = None,
+) -> dict[str, Any]:
     """
     Scrape conversation using Playwright (handles JavaScript rendering).
 
     Args:
-        share_url: ChatGPT share URL
+        share_url: ChatGPT share or conversation URL
         timeout: Page load timeout in milliseconds
+        headless: Set False for local runs when Cloudflare blocks headless Chromium
+        storage_state_path: Optional Playwright storage state JSON (logged-in session)
 
     Returns:
         Dictionary with conversation data (messages, title, url)
@@ -232,8 +240,20 @@ def scrape_with_playwright(share_url: str, timeout: int = 60000) -> dict[str, An
     print(f"Scraping with Playwright: {share_url}")
 
     with sync_playwright() as p:
-        browser = p.chromium.launch(headless=True)
-        page = browser.new_page()
+        browser = None
+        context = None
+        browser = p.chromium.launch(headless=headless)
+        state_path: Path | None = None
+        if storage_state_path:
+            candidate = Path(storage_state_path).expanduser()
+            if candidate.is_file():
+                state_path = candidate.resolve()
+        context = (
+            browser.new_context(storage_state=str(state_path))
+            if state_path
+            else browser.new_context()
+        )
+        page = context.new_page()
 
         # Intercept network responses to find conversation data API
         api_responses = []
@@ -243,7 +263,14 @@ def scrape_with_playwright(share_url: str, timeout: int = 60000) -> dict[str, An
             # Look for API endpoints that might contain conversation data
             if any(
                 keyword in url.lower()
-                for keyword in ["api", "share", "conversation", "backend", "v1"]
+                for keyword in [
+                    "api",
+                    "share",
+                    "conversation",
+                    "backend",
+                    "v1",
+                    "backend-api",
+                ]
             ):
                 try:
                     # Try to get JSON response
@@ -525,6 +552,7 @@ def scrape_with_playwright(share_url: str, timeout: int = 60000) -> dict[str, An
                             f"Using fallback text extraction: found {len(fallback_messages)} message blocks"
                         )
 
+            context.close()
             browser.close()
 
             # If we got data from API, use it; otherwise use DOM extraction
@@ -550,7 +578,16 @@ def scrape_with_playwright(share_url: str, timeout: int = 60000) -> dict[str, An
             return conversation_data
 
         except Exception as e:
-            browser.close()
+            if context is not None:
+                try:
+                    context.close()
+                except Exception:
+                    pass
+            if browser is not None:
+                try:
+                    browser.close()
+                except Exception:
+                    pass
             raise Exception(f"Playwright scraping failed: {e}")
 
 

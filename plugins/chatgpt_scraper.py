@@ -43,10 +43,11 @@ class ChatGPTScraper(ScraperBase):
         return ["playwright", "apify", "requests"]
 
     def can_handle(self, url: str) -> bool:
-        """Check if URL is a ChatGPT share URL."""
+        """Check if URL is a ChatGPT share or conversation URL."""
         return (
             "chatgpt.com/share/" in url
             or "chatgpt.com/c/" in url
+            or ("chatgpt.com/g/" in url and "/c/" in url)
             or "chat.openai.com/share/" in url
         )
 
