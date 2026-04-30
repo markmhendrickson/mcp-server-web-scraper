@@ -150,8 +150,27 @@ def extract_share_id(url: str) -> str:
     return match.group(1)
 
 
+def _parts_to_text(parts: Any) -> str:
+    """Flatten ChatGPT message content.parts to plain text."""
+    if parts is None:
+        return ""
+    if isinstance(parts, str):
+        return parts
+    if isinstance(parts, list):
+        chunks: list[str] = []
+        for p in parts:
+            if isinstance(p, str):
+                chunks.append(p)
+            elif isinstance(p, dict):
+                # multimodal / tool payloads — skip non-text fragments
+                if p.get("content_type") == "text" and isinstance(p.get("text"), str):
+                    chunks.append(p["text"])
+        return "".join(chunks)
+    return str(parts)
+
+
 def _extract_messages_from_mapping(data: dict[str, Any]) -> list[dict[str, Any]]:
-    """Extract messages list from ChatGPT mapping structure."""
+    """Extract messages list from ChatGPT mapping structure (chronological by create_time)."""
     messages = []
     mapping = data.get("mapping", {})
 
@@ -169,49 +188,118 @@ def _extract_messages_from_mapping(data: dict[str, Any]) -> list[dict[str, Any]]
         if isinstance(content, dict):
             if content.get("content_type") != "text":
                 continue
-            parts = content.get("parts", [])
-            text = parts[0] if parts else ""
+            text = _parts_to_text(content.get("parts"))
         elif isinstance(content, str):
             text = content
         else:
             continue
 
-        if not text:
+        if not text or not str(text).strip():
             continue
 
         create_time = msg.get("create_time")
         messages.append(
             {
+                "id": msg.get("id"),
                 "role": role,
-                "text": text,
+                "text": str(text).strip(),
                 "create_time": create_time,
                 "index": len(messages),
             }
         )
 
-    # Sort by create_time if available
-    messages.sort(key=lambda x: x.get("create_time", 0))
+    messages.sort(key=lambda x: (x.get("create_time") is None, x.get("create_time") or 0))
+    for i, m in enumerate(messages):
+        m["index"] = i
     return messages
 
 
-def scrape_with_playwright(
-    share_url: str,
-    timeout: int = 60000,
-    *,
-    headless: bool = True,
-    storage_state_path: str | Path | None = None,
-) -> dict[str, Any]:
+def _walk_dicts_for_mapping(obj: Any, depth: int = 0) -> list[dict[str, Any]]:
+    """Collect dicts that contain a non-empty 'mapping' (ChatGPT conversation JSON)."""
+    found: list[dict[str, Any]] = []
+    if depth > 14 or not isinstance(obj, dict):
+        return found
+    m = obj.get("mapping")
+    if isinstance(m, dict) and len(m) >= 1:
+        found.append(obj)
+    for v in obj.values():
+        if isinstance(v, dict):
+            found.extend(_walk_dicts_for_mapping(v, depth + 1))
+        elif isinstance(v, list):
+            for item in v:
+                if isinstance(item, dict):
+                    found.extend(_walk_dicts_for_mapping(item, depth + 1))
+    return found
+
+
+def _best_mapping_payload(
+    api_responses: list[dict[str, Any]],
+    conversation_id: str | None,
+) -> dict[str, Any] | None:
+    """
+    Pick the API JSON body with the richest mapping (full thread).
+    Prefer payloads whose conversation id matches the URL when possible.
+    """
+    candidates: list[dict[str, Any]] = []
+    for resp in api_responses:
+        data = resp.get("data")
+        if not isinstance(data, dict):
+            continue
+        candidates.extend(_walk_dicts_for_mapping(data))
+
+    if not candidates:
+        return None
+
+    def score(d: dict[str, Any]) -> int:
+        m = d.get("mapping")
+        return len(m) if isinstance(m, dict) else 0
+
+    def cid_match(d: dict[str, Any]) -> bool:
+        if not conversation_id:
+            return False
+        for key in ("conversation_id", "id", "uuid"):
+            v = d.get(key)
+            if isinstance(v, str) and v == conversation_id:
+                return True
+        conv = d.get("conversation")
+        if isinstance(conv, dict):
+            for key in ("id", "conversation_id", "uuid"):
+                v = conv.get(key)
+                if isinstance(v, str) and v == conversation_id:
+                    return True
+        return False
+
+    preferred = [c for c in candidates if cid_match(c)]
+    pool = preferred if preferred else candidates
+    return max(pool, key=score)
+
+
+def _chatgpt_backend_json_response(url: str) -> bool:
+    u = url.lower()
+    if "chatgpt.com" not in u and "chat.openai.com" not in u:
+        return False
+    # Capture any ChatGPT backend JSON; _best_mapping_payload keeps mapping bodies only.
+    return "backend-api" in u
+
+
+def scrape_with_playwright(share_url: str, timeout: int = 60000) -> dict[str, Any]:
     """
     Scrape conversation using Playwright (handles JavaScript rendering).
 
+    Preferentially uses ChatGPT **backend-api** JSON responses that include a
+    ``mapping`` (same shape as exports), then sorts messages by ``create_time``
+    for reliable chronological order. Falls back to DOM heuristics if no
+    mapping was captured (e.g. logged-out or blocked).
+
+    Set ``PLAYWRIGHT_HEADED=1`` to run a visible Chromium window (helps with
+    Cloudflare / login flows).
+
     Args:
-        share_url: ChatGPT share or conversation URL
+        share_url: ChatGPT share or ``/c/`` conversation URL
         timeout: Page load timeout in milliseconds
-        headless: Set False for local runs when Cloudflare blocks headless Chromium
-        storage_state_path: Optional Playwright storage state JSON (logged-in session)
 
     Returns:
-        Dictionary with conversation data (messages, title, url)
+        Dictionary with conversation data (messages, title, url, optional raw_data)
 
     Raises:
         ImportError: If playwright not installed
@@ -237,47 +325,40 @@ def scrape_with_playwright(
     # Import playwright after ensuring it's installed
     from playwright.sync_api import sync_playwright
 
+    try:
+        conversation_id = extract_share_id(share_url)
+    except ValueError:
+        conversation_id = None
+
     print(f"Scraping with Playwright: {share_url}")
 
+    headed = os.environ.get("PLAYWRIGHT_HEADED", "").strip().lower() in (
+        "1",
+        "true",
+        "yes",
+    )
+
     with sync_playwright() as p:
-        browser = None
-        context = None
-        browser = p.chromium.launch(headless=headless)
-        state_path: Path | None = None
-        if storage_state_path:
-            candidate = Path(storage_state_path).expanduser()
-            if candidate.is_file():
-                state_path = candidate.resolve()
-        context = (
-            browser.new_context(storage_state=str(state_path))
-            if state_path
-            else browser.new_context()
-        )
-        page = context.new_page()
+        browser = p.chromium.launch(headless=not headed)
+        page = browser.new_page()
 
-        # Intercept network responses to find conversation data API
-        api_responses = []
+        api_responses: list[dict[str, Any]] = []
 
-        def handle_response(response):
-            url = response.url
-            # Look for API endpoints that might contain conversation data
-            if any(
-                keyword in url.lower()
-                for keyword in [
-                    "api",
-                    "share",
-                    "conversation",
-                    "backend",
-                    "v1",
-                    "backend-api",
-                ]
-            ):
-                try:
-                    # Try to get JSON response
-                    if "application/json" in response.headers.get("content-type", ""):
-                        api_responses.append({"url": url, "data": response.json()})
-                except Exception:
-                    pass
+        def handle_response(response) -> None:
+            try:
+                if response.status != 200:
+                    return
+                url = response.url
+                if not _chatgpt_backend_json_response(url):
+                    return
+                ct = (response.headers.get("content-type") or "").lower()
+                if "json" not in ct:
+                    return
+                data = response.json()
+                if isinstance(data, dict):
+                    api_responses.append({"url": url, "data": data})
+            except Exception:
+                return
 
         page.on("response", handle_response)
 
@@ -299,13 +380,16 @@ def scrape_with_playwright(
                 page.wait_for_load_state("networkidle", timeout=30000)
             except Exception:
                 pass  # Continue even if networkidle times out
-            time.sleep(8)  # ChatGPT needs extra time for content rendering
+            time.sleep(5)
 
-            # Scroll to bottom to trigger lazy loading if needed
-            page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
-            time.sleep(2)
-            page.evaluate("window.scrollTo(0, 0)")  # Scroll back to top
-            time.sleep(2)
+            # Scroll to encourage lazy-loaded thread + late API responses
+            for y in (0, 400, 1200, 3000, 8000, 999999):
+                try:
+                    page.evaluate(f"window.scrollTo(0, {y})")
+                except Exception:
+                    break
+                time.sleep(0.8)
+            time.sleep(3)
 
             # First, try to get the page's visible text content
             visible_text = page.locator("body").inner_text()
@@ -475,27 +559,10 @@ def scrape_with_playwright(
                 }
             """)
 
-            # Check if we got conversation data from API responses
-            conversation_from_api = None
-            for resp in api_responses:
-                data = resp.get("data", {})
-                # Look for conversation structure in API response
-                if isinstance(data, dict):
-                    # Check for various possible structures
-                    if (
-                        "mapping" in data
-                        or "messages" in data
-                        or "conversation" in data
-                    ):
-                        conversation_from_api = data
-                        break
-                    # Check nested structures
-                    for key, value in data.items():
-                        if isinstance(value, dict) and (
-                            "mapping" in value or "messages" in value
-                        ):
-                            conversation_from_api = value
-                            break
+            # Prefer full conversation JSON from network (chronological via create_time)
+            conversation_from_api = _best_mapping_payload(
+                api_responses, conversation_id
+            )
 
             # If visible text was extracted, try to parse it as a fallback
             if visible_text and len(visible_text) > 100:
@@ -552,42 +619,50 @@ def scrape_with_playwright(
                             f"Using fallback text extraction: found {len(fallback_messages)} message blocks"
                         )
 
-            context.close()
             browser.close()
 
-            # If we got data from API, use it; otherwise use DOM extraction
-            if conversation_from_api:
-                # Convert API format to our expected format
-                if "mapping" in conversation_from_api:
-                    # Already in the right format
-                    return {
-                        "title": conversation_data.get("title", "ChatGPT Conversation"),
-                        "messages": _extract_messages_from_mapping(
-                            conversation_from_api
-                        ),
-                        "url": share_url,
-                        "raw_data": conversation_from_api,
-                    }
-                elif "messages" in conversation_from_api:
-                    return {
-                        "title": conversation_data.get("title", "ChatGPT Conversation"),
-                        "messages": conversation_from_api["messages"],
-                        "url": share_url,
-                    }
+            def _title_from_mapping_payload(d: dict[str, Any]) -> str | None:
+                t = d.get("title")
+                if isinstance(t, str) and t.strip():
+                    return t.strip()
+                conv = d.get("conversation")
+                if isinstance(conv, dict):
+                    for k in ("title", "name", "id"):
+                        v = conv.get(k)
+                        if isinstance(v, str) and v.strip() and k != "id":
+                            return v.strip()
+                return None
 
+            # If we got data from API, use it; otherwise use DOM extraction
+            if conversation_from_api and "mapping" in conversation_from_api:
+                n_map = len(conversation_from_api.get("mapping") or {})
+                print(
+                    f"Playwright: using backend mapping ({n_map} nodes) "
+                    f"from {len(api_responses)} JSON responses — chronological order."
+                )
+                title = (
+                    _title_from_mapping_payload(conversation_from_api)
+                    or conversation_data.get("title", "ChatGPT Conversation")
+                )
+                return {
+                    "title": title,
+                    "messages": _extract_messages_from_mapping(
+                        conversation_from_api
+                    ),
+                    "url": share_url,
+                    "raw_data": conversation_from_api,
+                    "source": "backend_api_mapping",
+                }
+
+            print(
+                "Playwright: no conversation mapping in network capture; "
+                "using DOM fallback (order not guaranteed). "
+                f"JSON responses captured: {len(api_responses)}."
+            )
             return conversation_data
 
         except Exception as e:
-            if context is not None:
-                try:
-                    context.close()
-                except Exception:
-                    pass
-            if browser is not None:
-                try:
-                    browser.close()
-                except Exception:
-                    pass
+            browser.close()
             raise Exception(f"Playwright scraping failed: {e}")
 
 
@@ -642,23 +717,17 @@ def scrape_with_apify(share_url: str, api_token: str | None = None) -> dict[str,
 
     client = ApifyClient(api_token)
 
-    actor_id = os.getenv(
-        "APIFY_CHATGPT_ACTOR_ID",
-        "straightforward_understanding/chatgpt-conversation-scraper",
-    ).strip()
-    _timeout_raw = (os.getenv("APIFY_CHATGPT_TIMEOUT_SECS") or "300").strip()
-    try:
-        timeout_secs = int(_timeout_raw) if _timeout_raw else 300
-    except ValueError:
-        timeout_secs = 300
+    print(f"Running Apify actor for: {share_url}")
 
-    print(f"Running Apify actor {actor_id} for: {share_url}")
-
-    run = client.actor(actor_id).call(
+    # Use the ChatGPT Conversation Scraper actor
+    # Actor ID: straightforward_understanding/chatgpt-conversation-scraper
+    run = client.actor(
+        "straightforward_understanding/chatgpt-conversation-scraper"
+    ).call(
         run_input={
             "startUrls": [{"url": share_url}],
         },
-        timeout_secs=timeout_secs,
+        timeout_secs=300,
     )
 
     # Wait for run to finish
@@ -674,19 +743,7 @@ def scrape_with_apify(share_url: str, api_token: str | None = None) -> dict[str,
 
     run_info = client.run(run["id"]).get()
     if run_info["status"] != "SUCCEEDED":
-        rid = run_info.get("id") or run.get("id")
-        status_msg = (run_info.get("statusMessage") or "").strip()
-        meta = run_info.get("meta") or {}
-        origin = meta.get("origin") or "UNKNOWN"
-        parts = [
-            f"Apify run failed with status: {run_info['status']}",
-            f"actor={actor_id}",
-            f"origin={origin}",
-        ]
-        if status_msg:
-            parts.append(f"statusMessage={status_msg}")
-        parts.append(f"debug=https://console.apify.com/actors/runs/{rid}")
-        raise ValueError(". ".join(parts))
+        raise ValueError(f"Apify run failed with status: {run_info['status']}")
 
     # Fetch results
     items = list(client.dataset(run["defaultDatasetId"]).iterate_items())

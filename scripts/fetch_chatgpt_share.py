@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
-"""Fetch a ChatGPT share or conversation URL and print or save export JSON. Loads .env from repo root."""
+"""One-off: fetch a ChatGPT share URL and print JSON. Loads .env from repo root."""
 
-import argparse
 import json
 import os
 import sys
@@ -29,76 +28,35 @@ from scraper import (
     convert_to_export_format,
 )
 
-DEFAULT_STORAGE = REPO_ROOT / "playwright" / ".auth" / "chatgpt_storage.json"
 
-
-def _apify_eligible(url: str) -> bool:
-    return "chatgpt.com/share/" in url
-
-
-def main() -> None:
-    parser = argparse.ArgumentParser(description="Scrape ChatGPT conversation to export JSON")
-    parser.add_argument("url", nargs="?", default=os.getenv("CHATGPT_SHARE_URL"), help="ChatGPT URL")
-    parser.add_argument(
-        "-o",
-        "--out",
-        help="Write JSON to this file instead of stdout",
-    )
-    parser.add_argument("--skip-apify", action="store_true", help="Only use Playwright")
-    parser.add_argument(
-        "--headed",
-        action="store_true",
-        help="Run Playwright with headless=False (often needed for Cloudflare)",
-    )
-    parser.add_argument(
-        "--storage-state",
-        metavar="PATH",
-        help=f"Playwright storage state JSON (default: {DEFAULT_STORAGE} if that file exists)",
-    )
-    args = parser.parse_args()
-    url = args.url
+def main():
+    url = os.getenv("CHATGPT_SHARE_URL")
+    if len(sys.argv) > 1:
+        url = sys.argv[1]
     if not url:
-        parser.error("pass url or set CHATGPT_SHARE_URL")
+        print("Usage: fetch_chatgpt_share.py <chatgpt share url>", file=sys.stderr)
+        print("  or set CHATGPT_SHARE_URL in env", file=sys.stderr)
+        sys.exit(2)
     share_id = extract_share_id(url)
     print("Share ID:", share_id, file=sys.stderr)
-
-    storage = args.storage_state
-    if not storage and DEFAULT_STORAGE.is_file():
-        storage = str(DEFAULT_STORAGE)
-
-    out = None
     token = os.getenv("APIFY_API_TOKEN")
-    if token and not args.skip_apify and _apify_eligible(url):
+    out = None
+    if token:
         try:
             out = scrape_with_apify(url, token)
         except Exception as e:
             print("Apify failed:", e, file=sys.stderr)
-    elif token and not args.skip_apify and not _apify_eligible(url):
-        print(
-            "Skipping Apify: actor only accepts chatgpt.com/share/... links.",
-            file=sys.stderr,
-        )
-
     if not out:
         print("Trying Playwright...", file=sys.stderr)
         try:
-            out = scrape_with_playwright(
-                url,
-                headless=not args.headed,
-                storage_state_path=storage,
-            )
+            out = scrape_with_playwright(url)
         except Exception as e:
             print("Playwright failed:", e, file=sys.stderr)
     if not out:
         print("No content retrieved.", file=sys.stderr)
         sys.exit(1)
     export = convert_to_export_format(out, share_id)
-    text = json.dumps(export, indent=2, ensure_ascii=False)
-    if args.out:
-        Path(args.out).write_text(text, encoding="utf-8")
-        print(args.out, file=sys.stderr)
-    else:
-        print(text)
+    print(json.dumps(export, indent=2))
 
 
 if __name__ == "__main__":

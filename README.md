@@ -17,7 +17,8 @@ MCP server for general-purpose web scraping. Supports multiple sources (ChatGPT,
 - **URL Formats**: 
   - `https://chatgpt.com/share/abc-123`
   - `https://chatgpt.com/c/abc-123` (private)
-- **Methods**: Playwright, Apify, requests
+  - `https://chatgpt.com/g/.../c/...` (project / custom GPT thread)
+- **Methods**: **Playwright first** (captures `backend-api` JSON with `mapping`; messages sorted by `create_time` when logged in), then **Apify** if Playwright yields no mapping (e.g. Cloudflare). Set `PLAYWRIGHT_HEADED=1` for a visible browser if headless capture fails.
 - **Storage**: `$DATA_DIR/imports/chatgpt/share_{id}.json`
 
 ### X/Twitter

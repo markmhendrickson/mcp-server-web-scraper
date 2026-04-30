@@ -4,7 +4,6 @@ ChatGPT scraper plugin.
 Reuses logic from the original ChatGPT scraper.
 """
 
-import os
 import sys
 from pathlib import Path
 from typing import Any
@@ -44,12 +43,14 @@ class ChatGPTScraper(ScraperBase):
 
     def can_handle(self, url: str) -> bool:
         """Check if URL is a ChatGPT share or conversation URL."""
-        return (
-            "chatgpt.com/share/" in url
-            or "chatgpt.com/c/" in url
-            or ("chatgpt.com/g/" in url and "/c/" in url)
-            or "chat.openai.com/share/" in url
-        )
+        if "chat.openai.com/share/" in url:
+            return True
+        if "chatgpt.com/share/" in url:
+            return True
+        # Private thread or GPT project path: .../c/<conversation-id>
+        if "chatgpt.com" in url and "/c/" in url:
+            return True
+        return False
 
     def extract_id(self, url: str) -> str:
         """Extract share ID from ChatGPT URL."""
@@ -68,34 +69,27 @@ class ChatGPTScraper(ScraperBase):
         if credentials is None:
             credentials = {}
 
+        # Get Apify token
         apify_token = credentials.get("apify_token")
-        if not apify_token:
-            apify_token = os.getenv("APIFY_API_TOKEN")
         if not apify_token:
             apify_token = get_apify_token_from_1password()
 
-        order_by_method = {
-            "auto": ["apify", "playwright", "requests"],
-            "apify": ["apify"],
-            "playwright": ["playwright"],
-            "requests": ["requests"],
-        }
-        methods_to_try = order_by_method.get(
-            (method or "auto").lower(),
-            order_by_method["auto"],
-        )
+        # Playwright first: intercepts backend-api conversation JSON (mapping +
+        # create_time) for chronological order when logged in. Apify fallback
+        # for share URLs / headless Cloudflare cases.
+        methods_to_try = ["playwright", "apify"]
 
         errors = []
         for scrape_method in methods_to_try:
             try:
                 if scrape_method == "playwright":
                     return scrape_with_playwright(url)
-                if scrape_method == "apify":
+                elif scrape_method == "apify":
                     if not apify_token:
                         errors.append("apify: APIFY_API_TOKEN required")
                         continue
                     return scrape_with_apify(url, apify_token)
-                if scrape_method == "requests":
+                elif scrape_method == "requests":
                     return scrape_with_requests(url)
             except Exception as e:
                 errors.append(f"{scrape_method}: {str(e)}")
