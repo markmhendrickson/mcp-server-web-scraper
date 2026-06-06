@@ -4,7 +4,7 @@ MCP server for general-purpose web scraping. Supports multiple sources (ChatGPT,
 
 ## Features
 
-- **Multiple Scraping Methods**: Playwright (default), Apify API, or requests/BeautifulSoup
+- **Multiple Scraping Methods**: Playwright (default), Apify API, requests/BeautifulSoup, or Xquik for Twitter/X
 - **Automatic Method Selection**: Tries methods in order until one succeeds
 - **1Password Integration**: Securely retrieve Apify API token from 1Password
 - **Auto-Install Dependencies**: Automatically installs missing packages
@@ -25,7 +25,7 @@ MCP server for general-purpose web scraping. Supports multiple sources (ChatGPT,
 - **URL Formats**:
   - Single tweet: `https://twitter.com/username/status/1234567890` or `https://x.com/username/status/1234567890`
   - Account profile (all tweets): `https://twitter.com/username` or `https://x.com/username`
-- **Methods**: Apify (primary)
+- **Methods**: Apify (primary). Set `method` to `xquik` to use Xquik for single-tweet lookup or account profile reads.
 - **Storage**: 
   - Single tweet: `$DATA_DIR/imports/twitter/tweet_{id}.json`
   - Account profile: One file per tweet in `$DATA_DIR/imports/twitter/tweet_{id}.json`
@@ -86,6 +86,12 @@ Configure via environment variables or `.env` file:
 # Optional: Apify API token (for Apify scraping method)
 APIFY_API_TOKEN=your-token-here
 
+# Optional: Xquik API key (for Twitter/X method="xquik")
+XQUIK_API_KEY=your-xquik-api-key
+
+# Optional: Xquik API base URL
+XQUIK_BASE_URL=https://xquik.com/api/v1
+
 # Optional: Data directory for storing conversations
 DATA_DIR=/path/to/data
 ```
@@ -116,8 +122,9 @@ Scrape content from any supported source. Automatically detects source from URL.
   - ChatGPT: `https://chatgpt.com/share/abc-123` or `https://chatgpt.com/c/abc-123`
   - Twitter/X (single tweet): `https://twitter.com/username/status/1234567890` or `https://x.com/username/status/1234567890`
   - Twitter/X (account profile): `https://twitter.com/username` or `https://x.com/username` (scrapes all tweets)
-- `method` (optional): Scraping method - "auto", "playwright", "apify", or "requests"
+- `method` (optional): Scraping method - "auto", "playwright", "apify", "requests", or "xquik"
   - Default: "auto" (tries methods in order)
+  - Use "xquik" for Twitter/X URLs when `XQUIK_API_KEY` is configured
 - `output_path` (optional): Custom output file path
   - Default: `$DATA_DIR/imports/{source}/{id}.json`
   - Note: For profile scraping, each tweet gets its own file
@@ -167,6 +174,13 @@ Scrape content from any supported source. Automatically detects source from URL.
 {
   "url": "https://twitter.com/username",
   "method": "apify"
+}
+```
+
+```json
+{
+  "url": "https://x.com/username/status/1234567890",
+  "method": "xquik"
 }
 ```
 
