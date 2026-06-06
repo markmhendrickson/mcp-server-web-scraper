@@ -80,6 +80,8 @@ def load_credentials_from_env() -> dict[str, str | None]:
     """Load credentials from environment variables or .env file."""
     credentials = {
         "apify_token": os.getenv("APIFY_API_TOKEN"),
+        "xquik_api_key": os.getenv("XQUIK_API_KEY"),
+        "xquik_base_url": os.getenv("XQUIK_BASE_URL"),
         "data_dir": os.getenv("DATA_DIR"),
     }
 
@@ -96,6 +98,16 @@ def load_credentials_from_env() -> dict[str, str | None]:
                     if line.startswith("APIFY_API_TOKEN="):
                         if not credentials["apify_token"]:
                             credentials["apify_token"] = (
+                                line.split("=", 1)[1].strip().strip("\"'")
+                            )
+                    elif line.startswith("XQUIK_API_KEY="):
+                        if not credentials["xquik_api_key"]:
+                            credentials["xquik_api_key"] = (
+                                line.split("=", 1)[1].strip().strip("\"'")
+                            )
+                    elif line.startswith("XQUIK_BASE_URL="):
+                        if not credentials["xquik_base_url"]:
+                            credentials["xquik_base_url"] = (
                                 line.split("=", 1)[1].strip().strip("\"'")
                             )
                     elif line.startswith("DATA_DIR="):
@@ -189,9 +201,10 @@ async def list_tools() -> list[Tool]:
                     },
                     "method": {
                         "type": "string",
-                        "enum": ["auto", "playwright", "apify", "requests"],
+                        "enum": ["auto", "playwright", "apify", "requests", "xquik"],
                         "description": (
                             "Scraping method to use. 'auto' tries methods in order until one succeeds. "
+                            "'xquik' is available for Twitter/X URLs and requires XQUIK_API_KEY. "
                             "Default: auto"
                         ),
                         "default": "auto",

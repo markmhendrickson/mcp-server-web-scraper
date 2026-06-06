@@ -2,6 +2,8 @@
 X/Twitter scraper plugin using Apify.
 """
 
+from __future__ import annotations
+
 import json
 import os
 import re
@@ -9,6 +11,8 @@ import sys
 import time
 from pathlib import Path
 from typing import Any
+
+import requests
 
 # Try to import apify-client
 APIFY_AVAILABLE = False
@@ -186,7 +190,7 @@ class TwitterScraper(ScraperBase):
 
     @property
     def supported_methods(self) -> list[str]:
-        return ["apify"]  # Apify is the primary method for Twitter
+        return ["apify", "xquik"]  # Apify remains the default Twitter method
 
     def can_handle(self, url: str) -> bool:
         """Check if URL is a Twitter/X URL."""
@@ -215,7 +219,15 @@ class TwitterScraper(ScraperBase):
         max_tweets: int | None = None,
         **kwargs: Any,
     ) -> dict[str, Any]:
-        """Scrape Twitter post using Apify."""
+        """Scrape Twitter post using the selected method."""
+        scrape_method = method.lower().strip()
+        if scrape_method == "xquik":
+            return self._scrape_with_xquik(url, credentials, max_tweets)
+        if scrape_method not in {"auto", "apify"}:
+            raise ValueError(
+                "Unsupported Twitter scraping method. Use 'auto', 'apify', or 'xquik'."
+            )
+
         # Check for apify-client at runtime (not just import time)
         try:
             from apify_client import ApifyClient
@@ -485,10 +497,140 @@ class TwitterScraper(ScraperBase):
         if isinstance(media, list):
             for m in media:
                 if isinstance(m, dict):
-                    u = m.get("media_url_https") or m.get("url") or m.get("media_url")
+                    u = (
+                        m.get("media_url_https")
+                        or m.get("mediaUrl")
+                        or m.get("url")
+                        or m.get("media_url")
+                    )
                     if u and isinstance(u, str):
                         urls.append(u)
         return urls
+
+    def _scrape_with_xquik(
+        self,
+        url: str,
+        credentials: dict[str, str | None] | None,
+        max_tweets: int | None,
+    ) -> dict[str, Any]:
+        """Scrape Twitter/X content via the optional Xquik read API."""
+        if credentials is None:
+            credentials = {}
+
+        if is_profile_url(url):
+            username = extract_username(url)
+            if not username:
+                raise ValueError(f"Could not extract username from URL: {url}")
+
+            limit = max_tweets if max_tweets is not None and max_tweets > 0 else 20
+            data = self._xquik_get(
+                "/x/tweets/search",
+                credentials,
+                params={
+                    "q": f"from:{username}",
+                    "fromUser": username,
+                    "queryType": "Latest",
+                    "limit": min(limit, 200),
+                },
+            )
+            tweets = data.get("tweets", [])
+            if not tweets:
+                raise ValueError("No tweet data returned by Xquik")
+            return {
+                "tweets": [
+                    self._normalize_xquik_raw_tweet(tweet, str(tweet.get("id", "")))
+                    for tweet in tweets
+                    if isinstance(tweet, dict)
+                ],
+                "is_profile": True,
+                "url": url,
+            }
+
+        if "/status/" in url:
+            tweet_id = extract_tweet_id(url)
+            data = self._xquik_get(f"/x/tweets/{tweet_id}", credentials)
+            tweet = data.get("tweet")
+            if not isinstance(tweet, dict):
+                raise ValueError("No tweet data returned by Xquik")
+            return self._normalize_xquik_raw_tweet(
+                tweet,
+                tweet_id,
+                data.get("author") if isinstance(data.get("author"), dict) else None,
+            )
+
+        raise ValueError(
+            "Unsupported Twitter URL format. "
+            "Use: https://twitter.com/username (profile) or "
+            "https://twitter.com/username/status/TWEET_ID (single tweet)"
+        )
+
+    def _xquik_get(
+        self,
+        path: str,
+        credentials: dict[str, str | None],
+        params: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """Run an authenticated GET request against Xquik."""
+        api_key = credentials.get("xquik_api_key") or os.getenv("XQUIK_API_KEY")
+        if not api_key:
+            raise ValueError(
+                "XQUIK_API_KEY required for method='xquik'. "
+                "Set env var or pass credentials={'xquik_api_key': '...'}."
+            )
+
+        base_url = (
+            credentials.get("xquik_base_url")
+            or os.getenv("XQUIK_BASE_URL")
+            or "https://xquik.com/api/v1"
+        ).rstrip("/")
+        response = requests.get(
+            f"{base_url}{path}",
+            params=params,
+            headers={"x-api-key": api_key},
+            timeout=30,
+        )
+        if response.status_code >= 400:
+            raise ValueError(f"Xquik request failed with status {response.status_code}")
+        return response.json()
+
+    def _normalize_xquik_raw_tweet(
+        self,
+        tweet: dict[str, Any],
+        fallback_id: str,
+        author: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """Convert Xquik tweet data into the existing Twitter normalizer shape."""
+        tweet_id = str(tweet.get("id") or fallback_id)
+        author_data = author or tweet.get("author") or {}
+        author_obj = author_data if isinstance(author_data, dict) else {}
+        username = str(author_obj.get("username") or author_obj.get("userName") or "")
+        normalized: dict[str, Any] = {
+            "id": tweet_id,
+            "text": tweet.get("text", ""),
+            "createdAt": tweet.get("createdAt"),
+            "likeCount": tweet.get("likeCount", 0),
+            "retweetCount": tweet.get("retweetCount", 0),
+            "replyCount": tweet.get("replyCount", 0),
+            "quoteCount": tweet.get("quoteCount", 0),
+            "bookmarkCount": tweet.get("bookmarkCount", 0),
+            "isReply": tweet.get("isReply", False),
+            "isRetweet": bool(tweet.get("retweeted_tweet")),
+            "isQuote": tweet.get("isQuoteStatus", False),
+            "lang": tweet.get("lang", ""),
+            "entities": tweet.get("entities") or {},
+            "media": tweet.get("media") or [],
+            "author": {
+                "userName": username,
+                "username": username,
+                "name": author_obj.get("name", ""),
+                "profilePicture": author_obj.get("profilePicture", ""),
+            },
+            "url": tweet.get("url") or (
+                f"https://x.com/{username}/status/{tweet_id}" if username else ""
+            ),
+            "_xquik": tweet,
+        }
+        return normalized
 
     def _normalize_single_tweet(
         self,
